@@ -1,0 +1,48 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.7",
+	"Category": "",
+	"Description": "",
+	"Modules": [
+		{
+			"Name": "Blocks",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"AirSim"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "AirSim",
+			"Enabled": true
+		},
+		{
+			"Name": "UEEditorMCP",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		},
+		{
+			"Name": "RawInput",
+			"Enabled": true
+		},
+		{
+			"Name": "PCG",
+			"Enabled": true
+		},
+		{
+			"Name": "PCGGeometryScriptInterop",
+			"Enabled": true
+		}
+	],
+	"AdditionalPluginDirectories": [
+		"../../../Unreal/Plugins"
+	],
+	"TargetPlatforms": [
+		"WindowsNoEditor",
+		"LinuxNoEditor"
+	]
+}

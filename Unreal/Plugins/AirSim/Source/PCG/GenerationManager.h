@@ -37,6 +37,51 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Setup")
 	TArray<AActor*> generated;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles")
+	bool bSpawnObstacles = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles")
+	TSubclassOf<AActor> ObstacleClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles", meta = (ClampMin = "0"))
+	int32 ObstacleStartBuffer = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles", meta = (ClampMin = "0"))
+	int32 ObstacleEndBuffer = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles", meta = (ClampMin = "1"))
+	int32 ObstacleMinIndexStep = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles", meta = (ClampMin = "1"))
+	int32 ObstacleMaxIndexStep = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles", meta = (ClampMin = "0"))
+	int32 ObstacleMaxCount = 4;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles", meta = (ClampMin = "0.0"))
+	float ObstacleBoundaryPadding = 400.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float ObstacleLateralRatio = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles", meta = (ClampMin = "0.0"))
+	float ObstacleForwardJitter = 250.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles", meta = (ClampMin = "0.0"))
+	float ObstacleYawJitter = 20.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles")
+	float ObstacleZOffset = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles", meta = (ClampMin = "0.0"))
+	float ObstacleMinChannelWidth = 800.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles")
+	float ObstacleSpeedMin = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles")
+	float ObstacleSpeedMax = 0.0f;
+
 	UFUNCTION(BlueprintCallable, Category = "LevelSetup")
 	bool HavenStep(UPARAM(ref) TArray<FTransform>& haven, float mina, float maxa, float mind, float maxd);
 
@@ -64,6 +109,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "LevelSetup")
 	void getGoal(int32 distance,FVector& location, FVector& left, FVector& right);
 
+	UFUNCTION(BlueprintCallable, Category = "LevelSetup")
+	void SpawnObstacles();
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
@@ -71,5 +119,8 @@ protected:
 public:	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
+
+private:
+	void SpawnObstaclesImmediate();
 
 };

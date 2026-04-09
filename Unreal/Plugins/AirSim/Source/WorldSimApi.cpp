@@ -5,8 +5,8 @@
 #include "common/common_utils/Utils.hpp"
 #include "Weather/WeatherLib.h"
 #include "DrawDebugHelpers.h"
-#include "Runtime/Engine/Classes/Components/LineBatchComponent.h"
-#include "Runtime/Engine/Classes/Engine/Engine.h"
+#include "Components/LineBatchComponent.h"
+#include "Engine/Engine.h"
 #include "Misc/OutputDeviceNull.h"
 #include "ImageUtils.h"
 #include <cstdlib>
@@ -896,7 +896,9 @@ bool WorldSimApi::testLineOfSightBetweenPoints(const msr::airlib::GeoPoint& lla1
                 color = FLinearColor{ 0, 1.0f, 0, 0.4f };
             }
 
-            simmode_->GetWorld()->PersistentLineBatcher->DrawLine(point1, point2, color, SDPG_World, 4, 999999);
+            if (ULineBatchComponent* LineBatcher = simmode_->GetWorld()->GetLineBatcher(UWorld::ELineBatcherType::WorldPersistent)) {
+                LineBatcher->DrawLine(point1, point2, color, SDPG_World, 4, 999999);
+            }
         }
     },
                                              true);

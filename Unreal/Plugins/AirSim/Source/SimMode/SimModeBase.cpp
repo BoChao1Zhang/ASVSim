@@ -1888,6 +1888,7 @@ bool ASimModeBase::activateGeneration(bool landscape)
         MaterialLayerInfos.Add(LayerGuid, {});
 
         TArray<FLandscapeImportLayerInfo> MaterialImportLayers;
+        TArray<FLandscapeLayer> EmptyLandscapeLayers;
 
         ALandscape* Landscape = GetWorld()->SpawnActor<ALandscape>(ALandscape::StaticClass(), Location, FRotator::ZeroRotator);
         Landscape->SetActorScale3D(FVector(100.0f,100.0f,100.0f));
@@ -1904,7 +1905,7 @@ bool ASimModeBase::activateGeneration(bool landscape)
             TEXT(""),
             MaterialLayerInfos,
             ELandscapeImportAlphamapType::Additive,
-            nullptr
+            EmptyLandscapeLayers
         );
 
         Landscape->RegisterAllComponents();
@@ -1981,6 +1982,12 @@ bool ASimModeBase::generatePortTerrain(const std::string& type, int seed, int le
     if (Regenerate) {
         GenerationManager->ProcessEvent(Regenerate, &Params);
         UE_LOG(LogTemp, Warning, TEXT("Terrain Generated"));
+
+        UFunction* SpawnObstacles = GenerationManager->FindFunction(FName("SpawnObstacles"));
+        if (SpawnObstacles) {
+            GenerationManager->ProcessEvent(SpawnObstacles, nullptr);
+            UE_LOG(LogTemp, Warning, TEXT("Obstacle placement finished"));
+        }
     }
 
 	return true;

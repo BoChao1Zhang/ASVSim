@@ -6,19 +6,40 @@ set ROOT_DIR=%~dp0
 REM // Check command line arguments
 set "noFullPolyCar="
 set "buildMode="
+set "cmakeGenerator=Visual Studio 17 2022"
+set "cmakeSingleConfig="
+set "vsMajor="
 
 REM //check VS version
 if "%VisualStudioVersion%" == "" (
     echo(
-    echo oh oh... You need to run this command from x64 Native Tools Command Prompt for VS 2022.
+    echo oh oh... You need to run this command from x64 Native Tools Command Prompt for VS 2026 or VS 2022.
     goto :buildfailed_nomsg
 )
-if "%VisualStudioVersion%" lss "17.0" (
+for /f "tokens=1 delims=." %%V in ("%VisualStudioVersion%") do set "vsMajor=%%V"
+if not defined vsMajor (
     echo(
-    echo Hello there! We just upgraded AirSim to Unreal Engine 5.4 and Visual Studio 2022.
+    echo Could not parse VisualStudioVersion=%VisualStudioVersion%.
+    goto :buildfailed_nomsg
+)
+if %vsMajor% lss 17 (
+    echo(
+    echo Hello there! We just upgraded AirSim to Unreal Engine 5.7.
+    echo Please use x64 Native Tools Command Prompt for Visual Studio 2026 or Visual Studio 2022.
     echo Here are few easy steps for upgrade so everything is new and shiny:
     echo https://github.com/Cosys-Lab/Cosys-AirSim/blob/main/docs/unreal_upgrade.md
     goto :buildfailed_nomsg
+)
+if %vsMajor% geq 18 (
+    set "cmakeGenerator=NMake Makefiles"
+    set "cmakeSingleConfig=1"
+    if defined VCToolsVersion (
+        if /I not "%VCToolsVersion:~0,5%"=="14.44" (
+            echo(
+            echo WARNING: Unreal Engine 5.7 in this repository is currently linked and validated with MSVC 14.44.
+            echo Re-run from: VsDevCmd.bat -arch=x64 -vcvars_ver=14.44
+        )
+    )
 )
 
 if "%1"=="" goto noargs
@@ -50,6 +71,13 @@ goto :eof
 
 :start
 chdir /d %ROOT_DIR% 
+
+REM // Suppress codepage-related warnings from third-party headers (Eigen) when building under localized Windows environments.
+if "%CL%" == "" (
+set "CL=/wd4819"
+) else (
+set "CL=/wd4819 %CL%"
+)
 
 REM //---------- Check cmake version ----------
 CALL check_cmake.bat
@@ -96,19 +124,31 @@ IF NOT EXIST external\rpclib\%RPC_VERSION_FOLDER% (
 )
 
 REM //---------- Build rpclib ------------
-ECHO Starting cmake to build rpclib...
-IF NOT EXIST external\rpclib\%RPC_VERSION_FOLDER%\build mkdir external\rpclib\%RPC_VERSION_FOLDER%\build
-cd external\rpclib\%RPC_VERSION_FOLDER%\build
-cmake -G"Visual Studio 17 2022" ..
-
-if "%buildMode%" == "" (
-cmake --build . 
-cmake --build . --config Release
+ECHO Starting cmake to build rpclib with generator "%cmakeGenerator%"...
+if "%cmakeSingleConfig%" == "1" (
+    if "%buildMode%" == "" (
+        call :build_rpclib_single_config Debug
+        if ERRORLEVEL 1 goto :buildfailed
+        call :build_rpclib_single_config Release
+        if ERRORLEVEL 1 goto :buildfailed
+    ) else (
+        call :build_rpclib_single_config %buildMode%
+        if ERRORLEVEL 1 goto :buildfailed
+    )
 ) else (
-cmake --build . --config %buildMode%
-)
+    IF NOT EXIST external\rpclib\%RPC_VERSION_FOLDER%\build mkdir external\rpclib\%RPC_VERSION_FOLDER%\build
+    cd external\rpclib\%RPC_VERSION_FOLDER%\build
+    cmake -G"%cmakeGenerator%" ..
 
-if ERRORLEVEL 1 goto :buildfailed
+    if "%buildMode%" == "" (
+    cmake --build .
+    cmake --build . --config Release
+    ) else (
+    cmake --build . --config %buildMode%
+    )
+
+    if ERRORLEVEL 1 goto :buildfailed
+)
 chdir /d %ROOT_DIR% 
 
 REM //---------- copy rpclib binaries and include folder inside AirLib folder ----------
@@ -167,6 +207,16 @@ REM //---------- all our output goes to Unreal/Plugin folder ----------
 if NOT exist Unreal\Plugins\AirSim\Source\AirLib mkdir Unreal\Plugins\AirSim\Source\AirLib
 robocopy /MIR AirLib Unreal\Plugins\AirSim\Source\AirLib  /XD temp *. /njh /njs /ndl /np
 copy /y AirSim.props Unreal\Plugins\AirSim\Source\AirLib
+if exist "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Debug\CMakeFiles" rmdir /s /q "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Debug\CMakeFiles"
+if exist "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Debug\cmake" rmdir /s /q "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Debug\cmake"
+if exist "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Debug\CMakeCache.txt" del /q "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Debug\CMakeCache.txt"
+if exist "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Debug\cmake_install.cmake" del /q "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Debug\cmake_install.cmake"
+if exist "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Debug\Makefile" del /q "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Debug\Makefile"
+if exist "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Release\CMakeFiles" rmdir /s /q "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Release\CMakeFiles"
+if exist "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Release\cmake" rmdir /s /q "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Release\cmake"
+if exist "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Release\CMakeCache.txt" del /q "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Release\CMakeCache.txt"
+if exist "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Release\cmake_install.cmake" del /q "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Release\cmake_install.cmake"
+if exist "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Release\Makefile" del /q "Unreal\Plugins\AirSim\Source\AirLib\deps\rpclib\lib\x64\Release\Makefile"
 
 REM //---------- done building ----------
 exit /b 0
@@ -178,6 +228,17 @@ echo #### Build failed - see messages above. 1>&2
 :buildfailed_nomsg
 chdir /d %ROOT_DIR% 
 exit /b 1
+
+:build_rpclib_single_config
+setlocal
+set "rpclibBuildMode=%~1"
+set "rpclibSourceDir=%ROOT_DIR%external\rpclib\%RPC_VERSION_FOLDER%"
+set "rpclibBuildDir=%rpclibSourceDir%\build\%rpclibBuildMode%"
+if NOT EXIST "%rpclibBuildDir%" mkdir "%rpclibBuildDir%"
+cmake -S "%rpclibSourceDir%" -B "%rpclibBuildDir%" -G"%cmakeGenerator%" -DCMAKE_BUILD_TYPE=%rpclibBuildMode%
+if ERRORLEVEL 1 exit /b 1
+cmake --build "%rpclibBuildDir%"
+exit /b %ERRORLEVEL%
 
 
 

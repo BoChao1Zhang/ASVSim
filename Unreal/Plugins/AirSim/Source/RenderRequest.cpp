@@ -3,6 +3,7 @@
 #include "Engine/TextureRenderTarget2D.h"
 #include "Async/TaskGraphInterfaces.h"
 #include "ImageUtils.h"
+#include "RHIResources.h"
 
 #include "AirBlueprintLib.h"
 #include "Async/Async.h"
@@ -152,7 +153,7 @@ void RenderRequest::ExecuteTask()
                 FRHICommandListImmediate& RHICmdList = GetImmediateCommandList_ForRenderCommand();
                 auto rt_resource = params_[i]->render_target->GetRenderTargetResource();
                 if (rt_resource != nullptr) {
-                    const FTexture2DRHIRef& rhi_texture = rt_resource->GetRenderTargetTexture();
+                    const FTextureRHIRef& rhi_texture = rt_resource->GetRenderTargetTexture();
                     FIntPoint size;
                     auto flags = setupRenderResource(rt_resource, params_[i].get(), results_[i].get(), size);
 

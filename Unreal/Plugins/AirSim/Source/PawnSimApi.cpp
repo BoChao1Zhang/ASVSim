@@ -292,15 +292,19 @@ bool PawnSimApi::testLineOfSightToPoint(const msr::airlib::GeoPoint& lla) const
         //		common_utils::Utils::log("NED from LLA: " + std::to_string(target_location.X) + ", " + std::to_string(target_location.Y) + ", " + std::to_string(target_location.Z), common_utils::Utils::kLogLevelInfo);
 
         if (AirSimSettings::singleton().show_los_debug_lines_) {
-            if (hit) {
-                // No LOS, so draw red line
-                FLinearColor color{ 1.0f, 0, 0, 0.4f };
-                params_.pawn->GetWorld()->LineBatcher->DrawLine(params_.pawn->GetActorLocation(), target_location, color, SDPG_World, 10, -1);
-            }
-            else {
-                // Yes LOS, so draw green line
-                FLinearColor color{ 0, 1.0f, 0, 0.4f };
-                params_.pawn->GetWorld()->LineBatcher->DrawLine(params_.pawn->GetActorLocation(), target_location, color, SDPG_World, 10, -1);
+            if (UWorld* World = params_.pawn->GetWorld()) {
+                if (ULineBatchComponent* LineBatcher = World->GetLineBatcher(UWorld::ELineBatcherType::World)) {
+                    if (hit) {
+                        // No LOS, so draw red line
+                        FLinearColor color{ 1.0f, 0, 0, 0.4f };
+                        LineBatcher->DrawLine(params_.pawn->GetActorLocation(), target_location, color, SDPG_World, 10, -1);
+                    }
+                    else {
+                        // Yes LOS, so draw green line
+                        FLinearColor color{ 0, 1.0f, 0, 0.4f };
+                        LineBatcher->DrawLine(params_.pawn->GetActorLocation(), target_location, color, SDPG_World, 10, -1);
+                    }
+                }
             }
         }
     },
