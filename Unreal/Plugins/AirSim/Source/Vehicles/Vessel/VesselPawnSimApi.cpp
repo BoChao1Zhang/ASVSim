@@ -24,6 +24,16 @@ void VesselPawnSimApi::initialize()
 {
     PawnSimApi::initialize();
 
+    Pose pose = getPose();
+    float pitch, roll, yaw;
+    VectorMath::toEulerianAngle(pose.orientation, pitch, roll, yaw);
+    pose.orientation = VectorMath::toQuaternion(0, 0, yaw);
+
+    Kinematics::State initial_kinematics = getKinematics()->getInitialState();
+    initial_kinematics.pose = pose;
+    getKinematics()->initialize(initial_kinematics);
+    getKinematics()->setState(initial_kinematics);
+
     //create vehicle API
     std::shared_ptr<UnrealSensorFactory> sensor_factory = std::make_shared<UnrealSensorFactory>(getPawn(), &getNedTransform());
     // vehicle_params_ = std::make_unique<MilliAmpereParams>();// MultiRotorParamsFactory::createConfig(getVehicleSetting(), sensor_factory);
@@ -34,6 +44,7 @@ void VesselPawnSimApi::initialize()
     //setup physics vehicle
     phys_vehicle_ = std::make_unique<Vessel>(vehicle_params_.get(), hydrodynamics_.get(), vehicle_api_.get(),
                                 getKinematics(), getEnvironment());
+    phys_vehicle_->setName(std::string(TCHAR_TO_UTF8(*getPawn()->GetName())));
     rotor_count_ = phys_vehicle_->wrenchVertexCount();
     rudder_info.assign(rotor_count_, RudderInfo());
 
@@ -42,10 +53,6 @@ void VesselPawnSimApi::initialize()
     pending_pose_status_ = PendingPoseStatus::NonePending;
     reset_pending_ = false;
     did_reset_ = false;
-    Pose pose = getPose();
-    float pitch, roll, yaw;
-    VectorMath::toEulerianAngle(pose.orientation, pitch, roll, yaw);
-    pose.orientation = VectorMath::toQuaternion(0, 0, yaw);
     setPose(pose, false);
 }
 

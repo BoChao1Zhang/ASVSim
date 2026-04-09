@@ -42,7 +42,6 @@ public:
 
 private:
 	bool api_control_enabled_ = false;
-	VesselControls last_controls_;
 	const AVesselPawn* pawn_;
 	const msr::airlib::Kinematics::State* pawn_kinematics_;
 	msr::airlib::GeoPoint  home_geopoint_;

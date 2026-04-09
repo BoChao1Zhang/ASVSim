@@ -63,6 +63,39 @@ namespace msr {
             //*** End: UpdatableState implementation ***//
 
         private:
+            static bool isFiniteVector(const Vector3r& value)
+            {
+                return std::isfinite(value.x()) && std::isfinite(value.y()) && std::isfinite(value.z());
+            }
+
+            static bool hasAbnormalMagnitude(const Vector3r& value, real_T threshold)
+            {
+                return value.cwiseAbs().maxCoeff() > threshold;
+            }
+
+            std::string formatAbnormalWrenchLog(PhysicsBody& body, const Wrench& body_wrench, const Kinematics::State& current) const
+            {
+                std::string message = Utils::stringf(
+                    "ABN-WRN body=%s totalF=%s totalT=%s curVel=%s curAcc=%s",
+                    body.getName().c_str(),
+                    VectorMath::toString(body_wrench.force).c_str(),
+                    VectorMath::toString(body_wrench.torque).c_str(),
+                    VectorMath::toString(current.twist.linear).c_str(),
+                    VectorMath::toString(current.accelerations.linear).c_str());
+
+                for (uint i = 0; i < body.wrenchVertexCount(); ++i) {
+                    const auto& vertex_wrench = body.getWrenchVertex(i).getWrench();
+                    message += Utils::stringf(
+                        " v%uF=%s v%uT=%s",
+                        i,
+                        VectorMath::toString(vertex_wrench.force).c_str(),
+                        i,
+                        VectorMath::toString(vertex_wrench.torque).c_str());
+                }
+
+                return message;
+            }
+
             void initPhysicsBody(PhysicsBody* body_ptr)
             {
                 body_ptr->last_kinematics_time = clock()->nowNanos();
@@ -127,7 +160,7 @@ namespace msr {
             }
 
 
-            static void getNextKinematicsNoCollision(TTimeDelta dt, PhysicsBody& body, const Kinematics::State& current,
+            void getNextKinematicsNoCollision(TTimeDelta dt, PhysicsBody& body, const Kinematics::State& current,
                 Kinematics::State& next, Wrench& next_wrench)
             {
                 const real_T dt_real = static_cast<real_T>(dt);
@@ -145,19 +178,24 @@ namespace msr {
                 next_wrench = body_wrench;
 
                 Utils::log(Utils::stringf("B-WRN %s: ", VectorMath::toString(body_wrench.force).c_str()));
+                if (!isFiniteVector(body_wrench.force) || !isFiniteVector(body_wrench.torque) ||
+                    hasAbnormalMagnitude(body_wrench.force, 1.0e6f) || hasAbnormalMagnitude(body_wrench.torque, 1.0e6f)) {
+                    throttledLogOutput(formatAbnormalWrenchLog(body, body_wrench, current), 0.5);
+                }
 
                 /************************* State variables *****************************************************/
                 Matrix3x3r coriolis_matrix = Matrix3x3r::Zero();
                 Matrix3x3r damping_matrix = Matrix3x3r::Zero();
                 Vector3r nu_dot = Vector3r::Zero();
+                const real_T yaw = toYaw(current.pose.orientation);
 
                 /************************* Current state space in nu/eta notation ******************************/
-                Vector3r eta = Vector3r(current.pose.position.x(), current.pose.position.y(), toYaw(current.pose.orientation));
+                Vector3r eta = Vector3r(current.pose.position.x(), current.pose.position.y(), yaw);
 				Vector3r nu = Vector3r(avg_linear.x(), avg_linear.y(), avg_angular.z());
 
                 /************************* Update accelerations due to force and torque ***********************/
                 Vector3r tau = Vector3r(next_wrench.force.x(), next_wrench.force.y(), next_wrench.torque.z());
-                computenuDot(nu_dot, body.getInertiaInv(), tau, current.pose.orientation.z(), current.twist.angular.z(), body.getDragVertex(0).getPosition());
+                computenuDot(nu_dot, body.getInertiaInv(), tau, yaw, current.twist.angular.z(), body.getDragVertex(0).getPosition());
 
                 //get new acceleration due to force - we'll use this acceleration in next time step
 				next.accelerations.linear = Vector3r(nu_dot.x(), nu_dot.y(), 0.0f);

@@ -67,9 +67,13 @@ namespace msr { namespace airlib {
 		virtual ~AbstractHydrodynamics() = default;
 
 	protected:
-		VesselParams* parameters_;
-		Vector3r dampingForce_, coriolisForce_;
-		Vector3r nu_, current_, nu_dot_, eta_dot_;
+		VesselParams* parameters_ = nullptr;
+		Vector3r dampingForce_ = Vector3r::Zero();
+		Vector3r coriolisForce_ = Vector3r::Zero();
+		Vector3r nu_ = Vector3r::Zero();
+		Vector3r current_ = Vector3r::Zero();
+		Vector3r nu_dot_ = Vector3r::Zero();
+		Vector3r eta_dot_ = Vector3r::Zero();
 		float heading_ = 0.0f;		// In radians
 		float rudder_angle_ = 0.0f; // In radians
 

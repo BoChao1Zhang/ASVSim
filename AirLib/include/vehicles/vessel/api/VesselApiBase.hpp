@@ -191,6 +191,8 @@ namespace msr {
             virtual void resetImplementation() override
             {
                 token_.cancel();
+                last_controls_ = VesselControls();
+                last_disturbances_ = DisturbanceControls();
                 VehicleApiBase::resetImplementation();
                 //reset sensors last after their ground truth has been reset
                 getSensors().reset();

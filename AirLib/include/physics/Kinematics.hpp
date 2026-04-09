@@ -38,6 +38,7 @@ public:
     void initialize(const State& initial)
     {
         initial_ = initial;
+        current_ = initial;
     }
 
     //*** Start: UpdatableState implementation ***//

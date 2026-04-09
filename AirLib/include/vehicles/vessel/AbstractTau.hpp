@@ -60,7 +60,7 @@ namespace msr {
 
         protected:
             Output output_;
-            float global_heading_;
+            float global_heading_ = 0.0f;
 
         private:
             // Returns yaw in radians

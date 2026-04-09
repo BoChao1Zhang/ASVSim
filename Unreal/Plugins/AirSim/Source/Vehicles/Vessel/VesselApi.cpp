@@ -33,7 +33,8 @@ void VesselApi::resetImplementation()
 {
 	msr::airlib::VesselApiBase::resetImplementation();
 
-	last_controls_ = VesselControls();
+	setVesselControls(VesselControls());
+	setDisturbanceControls(DisturbanceControls());
 }
 
 void VesselApi::update(float delta)
@@ -49,7 +50,7 @@ msr::airlib::GeoPoint VesselApi::getHomeGeoPoint() const
 void VesselApi::enableApiControl(bool is_enabled)
 {
 	if (api_control_enabled_ != is_enabled) {
-		last_controls_ = VesselControls();
+		setVesselControls(VesselControls());
 		api_control_enabled_ = is_enabled;
 	}
 }

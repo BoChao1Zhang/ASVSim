@@ -213,7 +213,7 @@ void UnrealEchoCommon::traceDirection(uint32 current_sample_index, bool use_inde
 					VectorMath::Quaternionf trace_rotation_quat = VectorMath::toQuaternion(VectorMath::front(), FVectorToVector3r(trace_direction));
 					Vector3r y_axis = VectorMath::rotateVector(VectorMath::right(), trace_rotation_quat, true);
 					Vector3r z_axis = VectorMath::rotateVector(VectorMath::down(), trace_rotation_quat, true);
-					DrawDebugCircle(cur_actor->GetWorld(), draw_location, radius, 128, FColor::Blue, persistent_lines, draw_time, 0u, 1.0f, Vector3rToFVector(y_axis), Vector3rToFVector(z_axis), false);
+					UAirBlueprintLib::DrawCircle(cur_actor->GetWorld(), draw_location, radius, 128, FColor::Blue, persistent_lines, draw_time, 0u, 1.0f, Vector3rToFVector(y_axis), Vector3rToFVector(z_axis), false);
 				}
 			}
 		}

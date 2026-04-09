@@ -19,6 +19,12 @@ namespace msr {
                 initialize(position, normal);
             }
 
+            virtual void resetImplementation() override
+            {
+                PhysicsBodyVertex::resetImplementation();
+                output_ = Output();
+            }
+
             virtual void update(volatile float delta) override
             {
                 //update environmental factors before we call base
@@ -63,7 +69,6 @@ namespace msr {
 
         private:
             std::function<Vector3r()> computation_method_;
-            Output output_;
         };
     }
 } //namespace
