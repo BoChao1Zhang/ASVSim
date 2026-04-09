@@ -41,6 +41,7 @@
 #include "WorldSimApi.h"
 
 #include "Engine/LevelScriptActor.h"
+#include "PCG/GenerationManager.h"
 #include "PCGVolume.h"
 #include "PCGComponent.h"
 #include "PCGWorldActor.h"
@@ -48,6 +49,366 @@
 #include "LandscapeComponent.h"
 #include "LandscapeInfo.h"
 #include "LandscapeProxy.h"
+#include "UObject/UnrealType.h"
+
+namespace
+{
+template <typename TActorType>
+TActorType* FindActorByExactName(UWorld* World, const TCHAR* TargetName)
+{
+    if (!World) {
+        return nullptr;
+    }
+
+    for (TActorIterator<TActorType> It(World); It; ++It)
+    {
+        if (It->GetName() == TargetName) {
+            return *It;
+        }
+    }
+
+    return nullptr;
+}
+
+AActor* FindGenerationManagerActor(UWorld* World)
+{
+    if (!World) {
+        return nullptr;
+    }
+
+    for (TActorIterator<AGenerationManager> It(World); It; ++It)
+    {
+        return *It;
+    }
+
+    UClass* GenerationManagerClass = UAirBlueprintLib::LoadClass("Class'/AirSim/PCG/generationManager.generationManager_C'");
+    if (GenerationManagerClass) {
+        for (TActorIterator<AActor> It(World, GenerationManagerClass); It; ++It)
+        {
+            return *It;
+        }
+    }
+
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        if (It->GetClass() && It->GetClass()->GetPathName().Contains(TEXT("/AirSim/PCG/generationManager"))) {
+            return *It;
+        }
+    }
+
+    return nullptr;
+}
+
+const TArray<FTransform>* FindTransformArrayProperty(const UObject* Object, const FName PropertyName)
+{
+    if (!Object) {
+        return nullptr;
+    }
+
+    if (const FArrayProperty* ArrayProperty = FindFProperty<FArrayProperty>(Object->GetClass(), PropertyName)) {
+        if (const FStructProperty* InnerStruct = CastField<FStructProperty>(ArrayProperty->Inner)) {
+            if (InnerStruct->Struct == TBaseStructure<FTransform>::Get()) {
+                return ArrayProperty->ContainerPtrToValuePtr<TArray<FTransform>>(Object);
+            }
+        }
+    }
+
+    return nullptr;
+}
+
+TArray<AActor*>* FindActorArrayProperty(UObject* Object, const FName PropertyName)
+{
+    if (!Object) {
+        return nullptr;
+    }
+
+    if (FArrayProperty* ArrayProperty = FindFProperty<FArrayProperty>(Object->GetClass(), PropertyName)) {
+        if (FObjectPropertyBase* InnerObject = CastField<FObjectPropertyBase>(ArrayProperty->Inner)) {
+            if (InnerObject->PropertyClass && InnerObject->PropertyClass->IsChildOf(AActor::StaticClass())) {
+                return ArrayProperty->ContainerPtrToValuePtr<TArray<AActor*>>(Object);
+            }
+        }
+    }
+
+    return nullptr;
+}
+
+FRandomStream* FindRandomStreamProperty(UObject* Object, const FName PropertyName)
+{
+    if (!Object) {
+        return nullptr;
+    }
+
+    if (FStructProperty* StructProperty = FindFProperty<FStructProperty>(Object->GetClass(), PropertyName)) {
+        if (StructProperty->Struct == TBaseStructure<FRandomStream>::Get()) {
+            return StructProperty->ContainerPtrToValuePtr<FRandomStream>(Object);
+        }
+    }
+
+    return nullptr;
+}
+
+int32 GetIntPropertyValue(const UObject* Object, const FName PropertyName, const int32 DefaultValue)
+{
+    if (!Object) {
+        return DefaultValue;
+    }
+
+    if (const FIntProperty* IntProperty = FindFProperty<FIntProperty>(Object->GetClass(), PropertyName)) {
+        return IntProperty->GetPropertyValue_InContainer(Object);
+    }
+
+    return DefaultValue;
+}
+
+float GetFloatPropertyValue(const UObject* Object, const FName PropertyName, const float DefaultValue)
+{
+    if (!Object) {
+        return DefaultValue;
+    }
+
+    if (const FDoubleProperty* DoubleProperty = FindFProperty<FDoubleProperty>(Object->GetClass(), PropertyName)) {
+        return static_cast<float>(DoubleProperty->GetPropertyValue_InContainer(Object));
+    }
+
+    if (const FFloatProperty* FloatProperty = FindFProperty<FFloatProperty>(Object->GetClass(), PropertyName)) {
+        return FloatProperty->GetPropertyValue_InContainer(Object);
+    }
+
+    return DefaultValue;
+}
+
+bool GetBoolPropertyValue(const UObject* Object, const FName PropertyName, const bool DefaultValue)
+{
+    if (!Object) {
+        return DefaultValue;
+    }
+
+    if (const FBoolProperty* BoolProperty = FindFProperty<FBoolProperty>(Object->GetClass(), PropertyName)) {
+        return BoolProperty->GetPropertyValue_InContainer(Object);
+    }
+
+    return DefaultValue;
+}
+
+TSubclassOf<AActor> GetActorClassPropertyValue(const UObject* Object, const FName PropertyName)
+{
+    if (!Object) {
+        return nullptr;
+    }
+
+    if (const FClassProperty* ClassProperty = FindFProperty<FClassProperty>(Object->GetClass(), PropertyName)) {
+        return Cast<UClass>(ClassProperty->GetPropertyValue_InContainer(Object));
+    }
+
+    return nullptr;
+}
+
+void SetBoolProperty(UObject* Object, const FName PropertyName, const bool bValue)
+{
+    if (!Object) {
+        return;
+    }
+
+    if (FBoolProperty* BoolProperty = FindFProperty<FBoolProperty>(Object->GetClass(), PropertyName)) {
+        BoolProperty->SetPropertyValue_InContainer(Object, bValue);
+    }
+}
+
+void SetRealProperty(UObject* Object, const FName PropertyName, const double Value)
+{
+    if (!Object) {
+        return;
+    }
+
+    if (FDoubleProperty* DoubleProperty = FindFProperty<FDoubleProperty>(Object->GetClass(), PropertyName)) {
+        DoubleProperty->SetPropertyValue_InContainer(Object, Value);
+        return;
+    }
+
+    if (FFloatProperty* FloatProperty = FindFProperty<FFloatProperty>(Object->GetClass(), PropertyName)) {
+        FloatProperty->SetPropertyValue_InContainer(Object, static_cast<float>(Value));
+    }
+}
+
+bool HasValidGenerationPathData(const AActor* GenerationManager, int32& OutRoadCount, int32& OutBoundaryCount)
+{
+    OutRoadCount = 0;
+    OutBoundaryCount = 0;
+
+    if (!GenerationManager) {
+        return false;
+    }
+
+    const TArray<FTransform>* Road = FindTransformArrayProperty(GenerationManager, TEXT("road"));
+    const TArray<FTransform>* Left = FindTransformArrayProperty(GenerationManager, TEXT("left"));
+    const TArray<FTransform>* Right = FindTransformArrayProperty(GenerationManager, TEXT("right"));
+
+    OutRoadCount = Road ? Road->Num() : 0;
+    const int32 LeftCount = Left ? Left->Num() : 0;
+    const int32 RightCount = Right ? Right->Num() : 0;
+    OutBoundaryCount = FMath::Min(LeftCount, RightCount);
+
+    return OutRoadCount > 0 && OutBoundaryCount > 0;
+}
+
+void SpawnRandomObstaclesForGenerationManager(AActor* GenerationManager)
+{
+    if (!IsValid(GenerationManager)) {
+        UE_LOG(LogTemp, Warning, TEXT("GenerationManager native obstacle spawn skipped: actor is invalid."));
+        return;
+    }
+
+    UWorld* World = GenerationManager->GetWorld();
+    if (!World) {
+        UE_LOG(LogTemp, Warning, TEXT("GenerationManager native obstacle spawn skipped: world is null."));
+        return;
+    }
+
+    const bool bEnableSpawn = GetBoolPropertyValue(GenerationManager, TEXT("bSpawnObstacles"), true);
+    if (!bEnableSpawn) {
+        UE_LOG(LogTemp, Verbose, TEXT("GenerationManager native obstacle spawn disabled by property."));
+        return;
+    }
+
+    const TArray<FTransform>* RoadPoints = FindTransformArrayProperty(GenerationManager, TEXT("road"));
+    const TArray<FTransform>* LeftPoints = FindTransformArrayProperty(GenerationManager, TEXT("left"));
+    const TArray<FTransform>* RightPoints = FindTransformArrayProperty(GenerationManager, TEXT("right"));
+    TArray<AActor*>* GeneratedActors = FindActorArrayProperty(GenerationManager, TEXT("Generated"));
+    if (!GeneratedActors) {
+        GeneratedActors = FindActorArrayProperty(GenerationManager, TEXT("generated"));
+    }
+
+    const int32 PointCount = RoadPoints ? RoadPoints->Num() : 0;
+    const int32 BoundaryCount = (LeftPoints && RightPoints) ? FMath::Min(LeftPoints->Num(), RightPoints->Num()) : 0;
+    const int32 UsableCount = FMath::Min(PointCount, BoundaryCount);
+    if (UsableCount <= 4) {
+        UE_LOG(LogTemp, Warning, TEXT("GenerationManager native obstacle spawn skipped: insufficient path points. road=%d boundary=%d"), PointCount, BoundaryCount);
+        return;
+    }
+
+    TSubclassOf<AActor> ObstacleClassOverride = GetActorClassPropertyValue(GenerationManager, TEXT("ObstacleClass"));
+    UClass* DefaultBuoyClass = UAirBlueprintLib::LoadClass("Class'/AirSim/Blueprints/BP_BuoySpawn.BP_BuoySpawn_C'");
+    UClass* DefaultBoatClass = UAirBlueprintLib::LoadClass("Class'/AirSim/Blueprints/Boat_Blueprint.Boat_Blueprint_C'");
+    if (!DefaultBoatClass) {
+        DefaultBoatClass = UAirBlueprintLib::LoadClass("Class'/AirSim/Blueprints/BP_NPCSpawn.BP_NPCSpawn_C'");
+    }
+
+    TArray<UClass*> CandidateObstacleClasses;
+    if (ObstacleClassOverride) {
+        CandidateObstacleClasses.Add(ObstacleClassOverride.Get());
+    }
+    else {
+        if (DefaultBuoyClass) {
+            CandidateObstacleClasses.Add(DefaultBuoyClass);
+        }
+        if (DefaultBoatClass && DefaultBoatClass != DefaultBuoyClass) {
+            CandidateObstacleClasses.Add(DefaultBoatClass);
+        }
+    }
+
+    if (CandidateObstacleClasses.Num() == 0) {
+        UE_LOG(LogTemp, Warning, TEXT("GenerationManager native obstacle spawn skipped: no obstacle class available for buoy/boat spawning."));
+        return;
+    }
+
+    FRandomStream LocalStream(GetIntPropertyValue(GenerationManager, TEXT("Seed"), 10));
+    FRandomStream* StreamProperty = FindRandomStreamProperty(GenerationManager, TEXT("stream"));
+    FRandomStream& ObstacleStream = StreamProperty ? *StreamProperty : LocalStream;
+
+    const int32 StartBuffer = FMath::Max(0, GetIntPropertyValue(GenerationManager, TEXT("ObstacleStartBuffer"), 2));
+    const int32 EndBuffer = FMath::Max(0, GetIntPropertyValue(GenerationManager, TEXT("ObstacleEndBuffer"), 2));
+    const int32 StepMin = FMath::Max(1, GetIntPropertyValue(GenerationManager, TEXT("ObstacleMinIndexStep"), 2));
+    const int32 StepMax = FMath::Max(StepMin, GetIntPropertyValue(GenerationManager, TEXT("ObstacleMaxIndexStep"), 4));
+    const int32 MaxSpawnCount = FMath::Max(1, GetIntPropertyValue(GenerationManager, TEXT("ObstacleMaxCount"), 4));
+
+    const float BoundaryPadding = FMath::Max(0.0f, GetFloatPropertyValue(GenerationManager, TEXT("ObstacleBoundaryPadding"), 350.0f));
+    const float LateralRatio = FMath::Clamp(GetFloatPropertyValue(GenerationManager, TEXT("ObstacleLateralRatio"), 0.35f), 0.0f, 1.0f);
+    const float ForwardJitter = FMath::Max(0.0f, GetFloatPropertyValue(GenerationManager, TEXT("ObstacleForwardJitter"), 250.0f));
+    const float YawJitter = FMath::Max(0.0f, GetFloatPropertyValue(GenerationManager, TEXT("ObstacleYawJitter"), 20.0f));
+    const float ZOffset = GetFloatPropertyValue(GenerationManager, TEXT("ObstacleZOffset"), 30.0f);
+    const float MinChannelWidth = FMath::Max(0.0f, GetFloatPropertyValue(GenerationManager, TEXT("ObstacleMinChannelWidth"), 800.0f));
+    const float SpeedMin = GetFloatPropertyValue(GenerationManager, TEXT("ObstacleSpeedMin"), 0.0f);
+    const float SpeedMax = GetFloatPropertyValue(GenerationManager, TEXT("ObstacleSpeedMax"), 0.0f);
+
+    const int32 StartIndex = FMath::Clamp(StartBuffer, 0, UsableCount - 1);
+    const int32 LastIndex = FMath::Clamp(UsableCount - 1 - EndBuffer, 0, UsableCount - 1);
+    if (StartIndex > LastIndex) {
+        UE_LOG(LogTemp, Warning, TEXT("GenerationManager native obstacle spawn skipped: candidate range is empty."));
+        return;
+    }
+
+    int32 CurrentIndex = StartIndex + ObstacleStream.RandRange(0, FMath::Max(0, StepMax - 1));
+    int32 SpawnedCount = 0;
+    int32 SafetyCounter = 0;
+
+    while (CurrentIndex <= LastIndex && SpawnedCount < MaxSpawnCount && SafetyCounter < UsableCount) {
+        const FTransform& RoadTransform = (*RoadPoints)[CurrentIndex];
+        const FVector RoadLocation = RoadTransform.GetLocation();
+        const FRotator RoadRotation = RoadTransform.Rotator();
+        const FVector ForwardVector = RoadRotation.Vector();
+        const FVector RightVector = RoadRotation.RotateVector(FVector::RightVector);
+
+        const float ChannelWidth = FVector::Dist2D((*LeftPoints)[CurrentIndex].GetLocation(), (*RightPoints)[CurrentIndex].GetLocation());
+        if (ChannelWidth < MinChannelWidth) {
+            CurrentIndex += ObstacleStream.RandRange(StepMin, StepMax);
+            ++SafetyCounter;
+            continue;
+        }
+
+        float HalfUsableWidth = FMath::Max((ChannelWidth * 0.5f) - BoundaryPadding, 0.0f);
+        HalfUsableWidth *= LateralRatio;
+
+        const float LateralOffset = HalfUsableWidth > KINDA_SMALL_NUMBER ? ObstacleStream.FRandRange(-HalfUsableWidth, HalfUsableWidth) : 0.0f;
+        const float ForwardOffset = ForwardJitter > 0.0f ? ObstacleStream.FRandRange(-ForwardJitter, ForwardJitter) : 0.0f;
+        const float YawOffset = YawJitter > 0.0f ? ObstacleStream.FRandRange(-YawJitter, YawJitter) : 0.0f;
+
+        FVector SpawnLocation = RoadLocation + (RightVector * LateralOffset) + (ForwardVector * ForwardOffset);
+        SpawnLocation.Z += ZOffset;
+
+        FRotator SpawnRotation = RoadRotation;
+        SpawnRotation.Pitch = 0.0f;
+        SpawnRotation.Roll = 0.0f;
+        SpawnRotation.Yaw += YawOffset;
+
+        UClass* SpawnClass = CandidateObstacleClasses[0];
+        if (CandidateObstacleClasses.Num() > 1) {
+            SpawnClass = CandidateObstacleClasses[ObstacleStream.RandRange(0, CandidateObstacleClasses.Num() - 1)];
+        }
+
+        const FTransform SpawnTransform(SpawnRotation, SpawnLocation);
+        AActor* SpawnedObstacle = World->SpawnActorDeferred<AActor>(
+            SpawnClass,
+            SpawnTransform,
+            GenerationManager,
+            nullptr,
+            ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn);
+
+        if (SpawnedObstacle) {
+            const float FinalSpeedMin = FMath::Min(SpeedMin, SpeedMax);
+            const float FinalSpeedMax = FMath::Max(SpeedMin, SpeedMax);
+            const double ObstacleSpeed = FinalSpeedMax > FinalSpeedMin
+                ? ObstacleStream.FRandRange(FinalSpeedMin, FinalSpeedMax)
+                : FinalSpeedMin;
+
+            SetBoolProperty(SpawnedObstacle, TEXT("CustomVelocity"), true);
+            SetBoolProperty(SpawnedObstacle, TEXT("ApplyVelocityOnBeginPlay"), false);
+            SetRealProperty(SpawnedObstacle, TEXT("Speed"), ObstacleSpeed);
+
+            UGameplayStatics::FinishSpawningActor(SpawnedObstacle, SpawnTransform);
+            if (GeneratedActors) {
+                GeneratedActors->Add(SpawnedObstacle);
+            }
+            ++SpawnedCount;
+        }
+
+        CurrentIndex += ObstacleStream.RandRange(StepMin, StepMax);
+        ++SafetyCounter;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("GenerationManager native obstacle spawn finished. spawned=%d road=%d boundary=%d"), SpawnedCount, PointCount, BoundaryCount);
+}
+} // namespace
 
 ASimModeBase* ASimModeBase::SIMMODE = nullptr;
 
@@ -1841,15 +2202,23 @@ bool ASimModeBase::spawnObstacle(const msr::airlib::Pose& pose, float speed, con
 
 bool ASimModeBase::activateGeneration(bool landscape)
 {
+    UWorld* World = GetWorld();
+    if (!World) {
+        UE_LOG(LogTemp, Warning, TEXT("activateGeneration failed: world is null."));
+        return false;
+    }
+
     //set variables
     FVector Location = FVector(0.0f, 0.0f, 200.0f);
     FRotator Rotation = FRotator::ZeroRotator;
     FVector Scale = FVector(250.0f, 250.0f, 1.0f);
-    //spawn PCGVolume
     FActorSpawnParameters SpawnParams;
-    SpawnParams.Name = TEXT("GeneratedPCGVolume");
 
-    APCGVolume* PCGVolume = GetWorld()->SpawnActor<APCGVolume>(APCGVolume::StaticClass(), Location, Rotation, SpawnParams);
+    APCGVolume* PCGVolume = FindActorByExactName<APCGVolume>(World, TEXT("GeneratedPCGVolume"));
+    if (!PCGVolume) {
+        SpawnParams.Name = TEXT("GeneratedPCGVolume");
+        PCGVolume = World->SpawnActor<APCGVolume>(APCGVolume::StaticClass(), Location, Rotation, SpawnParams);
+    }
 
     if (PCGVolume)
     {
@@ -1865,8 +2234,11 @@ bool ASimModeBase::activateGeneration(bool landscape)
         }
     }
     //spawn PCGWorldActor (needed for PCG genertion)
-    SpawnParams.Name = TEXT("PCGWorldActor");
-    APCGWorldActor* PCGWorld = GetWorld()->SpawnActor<APCGWorldActor>(APCGWorldActor::StaticClass(), Location, Rotation, SpawnParams);
+    APCGWorldActor* PCGWorld = FindActorByExactName<APCGWorldActor>(World, TEXT("PCGWorldActor"));
+    if (!PCGWorld) {
+        SpawnParams.Name = TEXT("PCGWorldActor");
+        PCGWorld = World->SpawnActor<APCGWorldActor>(APCGWorldActor::StaticClass(), Location, Rotation, SpawnParams);
+    }
 
     Location = FVector(-25200.0f, -25200.0f, 100.0f);
     //spawn landscape
@@ -1890,34 +2262,43 @@ bool ASimModeBase::activateGeneration(bool landscape)
         TArray<FLandscapeImportLayerInfo> MaterialImportLayers;
         TArray<FLandscapeLayer> EmptyLandscapeLayers;
 
-        ALandscape* Landscape = GetWorld()->SpawnActor<ALandscape>(ALandscape::StaticClass(), Location, FRotator::ZeroRotator);
-        Landscape->SetActorScale3D(FVector(100.0f,100.0f,100.0f));
+        ALandscape* Landscape = FindActorByExactName<ALandscape>(World, TEXT("Landscape"));
+        if (!Landscape) {
+            Landscape = World->SpawnActor<ALandscape>(ALandscape::StaticClass(), Location, FRotator::ZeroRotator);
+            if (Landscape) {
+                Landscape->SetActorScale3D(FVector(100.0f,100.0f,100.0f));
 
-        Landscape->Import(
-            FGuid::NewGuid(),
-            MinX,
-            MinY,
-            MaxX,
-            MaxY,
-            1,
-            63,
-            HeightDataMap,
-            TEXT(""),
-            MaterialLayerInfos,
-            ELandscapeImportAlphamapType::Additive,
-            EmptyLandscapeLayers
-        );
+                Landscape->Import(
+                    FGuid::NewGuid(),
+                    MinX,
+                    MinY,
+                    MaxX,
+                    MaxY,
+                    1,
+                    63,
+                    HeightDataMap,
+                    TEXT(""),
+                    MaterialLayerInfos,
+                    ELandscapeImportAlphamapType::Additive,
+                    EmptyLandscapeLayers
+                );
 
-        Landscape->RegisterAllComponents();
+                Landscape->RegisterAllComponents();
+            }
+        }
     }
 	//spawn generation manager
-    std::string path = "Class'/AirSim/PCG/generationManager.generationManager_C'";
+    AActor* ExistingGenerationManager = FindGenerationManagerActor(World);
+    if (!ExistingGenerationManager) {
+        std::string path = "Class'/AirSim/PCG/generationManager.generationManager_C'";
+        UClass* BPGeneration = UAirBlueprintLib::LoadClass(path);
+        FTransform SpawnTransform(FQuat(Rotation), FVector::ZeroVector);
 
-    auto BP_generation = UAirBlueprintLib::LoadClass(path);
-    ;
-    FTransform SpawnTransform(FQuat(Rotation), FVector::ZeroVector);
-
-    AActor* spawned_npc = GetWorld()->SpawnActor<AActor>(BP_generation, SpawnTransform);
+        if (!BPGeneration || !World->SpawnActor<AActor>(BPGeneration, SpawnTransform)) {
+            UE_LOG(LogTemp, Warning, TEXT("activateGeneration failed: unable to spawn generationManager."));
+            return false;
+        }
+    }
 
     return true;
 }
@@ -1925,27 +2306,19 @@ bool ASimModeBase::activateGeneration(bool landscape)
 bool ASimModeBase::generatePortTerrain(const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd)
 {
 	//get generation manager actor
-    AActor* GenerationManager = nullptr;
-    FString TargetName = TEXT("generationManager_C_0");
-
-    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
-    {
-        if (It->GetName() == TargetName)
-        {
-            GenerationManager = *It;
-            break;
-        }
-    }
-    //change current seed
+    AActor* GenerationManager = FindGenerationManagerActor(GetWorld());
     if (!GenerationManager)
     {
-        UE_LOG(LogTemp, Warning, TEXT("GenerationManager actor is null!"));
+        UE_LOG(LogTemp, Warning, TEXT("GenerationManager actor is null. Terrain generation aborted."));
         return false;
     }
 	UFunction* Function = GenerationManager->FindFunction(FName("SetSeed"));
 	if (Function) {
         GenerationManager->ProcessEvent(Function, &seed);
-		UE_LOG(LogTemp, Warning, TEXT("New Seed: %d"), seed);
+		UE_LOG(LogTemp, Warning, TEXT("GenerationManager seed updated to %d."), seed);
+	}
+    else {
+        UE_LOG(LogTemp, Warning, TEXT("GenerationManager is missing SetSeed."));
 	}
     //set parameters
     UFunction* Regenerate;
@@ -1981,13 +2354,32 @@ bool ASimModeBase::generatePortTerrain(const std::string& type, int seed, int le
     Regenerate = GenerationManager->FindFunction(FName("generateTerrain")); //TODO: Maybe change to generatePortTerrain
     if (Regenerate) {
         GenerationManager->ProcessEvent(Regenerate, &Params);
-        UE_LOG(LogTemp, Warning, TEXT("Terrain Generated"));
+        int32 RoadCount = 0;
+        int32 BoundaryCount = 0;
+        const bool bHasValidPathData = HasValidGenerationPathData(GenerationManager, RoadCount, BoundaryCount);
+        UE_LOG(LogTemp, Warning, TEXT("Terrain Generated. road=%d boundary=%d"), RoadCount, BoundaryCount);
 
         UFunction* SpawnObstacles = GenerationManager->FindFunction(FName("SpawnObstacles"));
-        if (SpawnObstacles) {
-            GenerationManager->ProcessEvent(SpawnObstacles, nullptr);
-            UE_LOG(LogTemp, Warning, TEXT("Obstacle placement finished"));
+        if (!bHasValidPathData) {
+            UE_LOG(LogTemp, Warning, TEXT("GenerationManager path data is incomplete after generateTerrain. Skipping obstacle placement."));
         }
+        else if (SpawnObstacles) {
+            GenerationManager->ProcessEvent(SpawnObstacles, nullptr);
+            UE_LOG(LogTemp, Warning, TEXT("Obstacle placement triggered"));
+        }
+        else {
+            UE_LOG(LogTemp, Warning, TEXT("GenerationManager is missing SpawnObstacles. Falling back to native obstacle placement."));
+            TWeakObjectPtr<AActor> WeakGenerationManager(GenerationManager);
+            UAirBlueprintLib::RunCommandOnGameThread([WeakGenerationManager]() {
+                if (WeakGenerationManager.IsValid()) {
+                    SpawnRandomObstaclesForGenerationManager(WeakGenerationManager.Get());
+                }
+            }, true);
+        }
+    }
+    else {
+        UE_LOG(LogTemp, Warning, TEXT("GenerationManager is missing generateTerrain."));
+        return false;
     }
 
 	return true;
@@ -2002,20 +2394,25 @@ std::vector<FVector2D> ASimModeBase::getGoal(int distance, FVector2D initial_loc
 	FVector2D port_left = FVector2D(0, 0);
 	FVector2D port_right = FVector2D(0, 0);
 	
-    AActor* GenerationManager = nullptr;
-    FString TargetName = TEXT("generationManager_C_0");
-
-    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
-    {
-        if (It->GetName() == TargetName)
-        {
-            GenerationManager = *It;
-            break;
-        }
-    }
+    AActor* GenerationManager = FindGenerationManagerActor(GetWorld());
     if (!GenerationManager)
     {
         UE_LOG(LogTemp, Warning, TEXT("GenerationManager actor is null!"));
+        return port_locations;
+    }
+
+    int32 RoadCount = 0;
+    int32 BoundaryCount = 0;
+    if (!HasValidGenerationPathData(GenerationManager, RoadCount, BoundaryCount))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("GenerationManager path data is invalid before getGoal. road=%d boundary=%d"), RoadCount, BoundaryCount);
+        return port_locations;
+    }
+
+    const int32 MaxSafeIndex = FMath::Min(RoadCount, BoundaryCount) - 1;
+    if (distance < 0 || distance > MaxSafeIndex)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("getGoal request %d is outside generated path range 0..%d"), distance, MaxSafeIndex);
         return port_locations;
     }
 

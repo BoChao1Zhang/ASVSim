@@ -18,12 +18,14 @@ public:
 public:
     typedef std::function<void(void)> OnToggleRecording;
 
-    //TODO: Tick is not working
-    //virtual void Tick_Implementation(FGeometry MyGeometry, float InDeltaTime) override;
-
     void updateDebugReport(const std::string& text);
     void setReportVisible(bool is_visible);
     void toggleHelpVisibility();
+    void updateMiniMap(const TArray<FVector2D>& left_boundary,
+                       const TArray<FVector2D>& right_boundary,
+                       const FVector2D& vessel_position,
+                       const FVector2D& goal_position,
+                       bool is_valid);
 
     void setOnToggleRecordingHandler(OnToggleRecording handler);
 
@@ -58,6 +60,20 @@ protected:
     UFUNCTION(BlueprintImplementableEvent, Category = "C++ Interface")
     bool setReportText(const FString& text);
 
+    virtual int32 NativePaint(const FPaintArgs& Args,
+                              const FGeometry& AllottedGeometry,
+                              const FSlateRect& MyCullingRect,
+                              FSlateWindowElementList& OutDrawElements,
+                              int32 LayerId,
+                              const FWidgetStyle& InWidgetStyle,
+                              bool bParentEnabled) const override;
+
 private:
+    TArray<FVector2D> minimap_left_boundary_;
+    TArray<FVector2D> minimap_right_boundary_;
+    FVector2D minimap_vessel_position_ = FVector2D::ZeroVector;
+    FVector2D minimap_goal_position_ = FVector2D::ZeroVector;
+    bool minimap_is_valid_ = false;
+
     OnToggleRecording on_toggle_recording_;
 };

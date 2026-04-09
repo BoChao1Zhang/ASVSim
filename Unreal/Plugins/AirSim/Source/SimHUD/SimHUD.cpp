@@ -2,6 +2,7 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Misc/FileHelper.h"
+#include "UObject/UnrealType.h"
 
 #include "Vehicles/Multirotor/SimModeWorldMultiRotor.h"
 #include "Vehicles/Car/SimModeCar.h"
@@ -11,6 +12,58 @@
 
 #include "common/AirSimSettings.hpp"
 #include <stdexcept>
+
+namespace
+{
+constexpr int32 MiniMapGoalPreviewIndex = 5;
+
+AActor* FindGenerationManagerActor(UWorld* World)
+{
+    if (!World) {
+        return nullptr;
+    }
+
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        if (It->GetClass() && It->GetClass()->GetPathName().Contains(TEXT("/AirSim/PCG/generationManager"))) {
+            return *It;
+        }
+    }
+
+    return nullptr;
+}
+
+TArray<FTransform>* FindTransformArrayProperty(UObject* Object, const FName PropertyName)
+{
+    if (!Object) {
+        return nullptr;
+    }
+
+    if (FArrayProperty* ArrayProperty = FindFProperty<FArrayProperty>(Object->GetClass(), PropertyName)) {
+        if (FStructProperty* InnerStruct = CastField<FStructProperty>(ArrayProperty->Inner)) {
+            if (InnerStruct->Struct == TBaseStructure<FTransform>::Get()) {
+                return ArrayProperty->ContainerPtrToValuePtr<TArray<FTransform>>(Object);
+            }
+        }
+    }
+
+    return nullptr;
+}
+
+void CopyTransformPointsAs2D(const TArray<FTransform>* Source, TArray<FVector2D>& OutPoints)
+{
+    OutPoints.Reset();
+    if (!Source) {
+        return;
+    }
+
+    OutPoints.Reserve(Source->Num());
+    for (const FTransform& Transform : *Source) {
+        const FVector Location = Transform.GetLocation();
+        OutPoints.Add(FVector2D(Location.X, Location.Y));
+    }
+}
+} // namespace
 
 ASimHUD::ASimHUD()
 {
@@ -49,6 +102,42 @@ void ASimHUD::Tick(float DeltaSeconds)
 {
     if (simmode_ && simmode_->EnableReport)
         widget_->updateDebugReport(simmode_->getDebugReport());
+
+    if (!widget_ || !simmode_) {
+        return;
+    }
+
+    TArray<FVector2D> LeftBoundary;
+    TArray<FVector2D> RightBoundary;
+    FVector2D GoalPosition = FVector2D::ZeroVector;
+    FVector2D VesselPosition = FVector2D::ZeroVector;
+    bool bHasMiniMapData = false;
+
+    if (AActor* GenerationManager = FindGenerationManagerActor(GetWorld())) {
+        TArray<FTransform>* LeftPoints = FindTransformArrayProperty(GenerationManager, TEXT("left"));
+        TArray<FTransform>* RightPoints = FindTransformArrayProperty(GenerationManager, TEXT("right"));
+        TArray<FTransform>* RoadPoints = FindTransformArrayProperty(GenerationManager, TEXT("road"));
+
+        if (LeftPoints && RightPoints && RoadPoints) {
+            const int32 SharedCount = FMath::Min3(LeftPoints->Num(), RightPoints->Num(), RoadPoints->Num());
+            if (SharedCount > 1) {
+                CopyTransformPointsAs2D(LeftPoints, LeftBoundary);
+                CopyTransformPointsAs2D(RightPoints, RightBoundary);
+
+                const int32 GoalIndex = FMath::Clamp(MiniMapGoalPreviewIndex, 0, SharedCount - 1);
+                const FVector GoalLocation = (*RoadPoints)[GoalIndex].GetLocation();
+                GoalPosition = FVector2D(GoalLocation.X, GoalLocation.Y);
+                bHasMiniMapData = true;
+            }
+        }
+    }
+
+    if (APawn* PlayerPawn = GetWorld() ? GetWorld()->GetFirstPlayerController()->GetPawn() : nullptr) {
+        const FVector PawnLocation = PlayerPawn->GetActorLocation();
+        VesselPosition = FVector2D(PawnLocation.X, PawnLocation.Y);
+    }
+
+    widget_->updateMiniMap(LeftBoundary, RightBoundary, VesselPosition, GoalPosition, bHasMiniMapData);
 }
 
 void ASimHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)

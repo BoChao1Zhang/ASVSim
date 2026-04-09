@@ -16,27 +16,6 @@ public:
 	// Sets default values for this actor's properties
 	AGenerationManager();
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Setup")
-	TArray<FTransform> road;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Setup")
-	TArray<FTransform> aleft;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Setup")
-	TArray<FTransform> aright;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Setup")
-	TArray<FTransform> temp;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Setup")
-	int aseed;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Setup")
-	FRandomStream stream;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Setup")
-	TArray<AActor*> generated;
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles")
 	bool bSpawnObstacles = true;
 
@@ -121,6 +100,8 @@ public:
 	virtual void Tick(float DeltaTime) override;
 
 private:
+	int32 CachedSeed = 10;
+
 	void SpawnObstaclesImmediate();
 
 };

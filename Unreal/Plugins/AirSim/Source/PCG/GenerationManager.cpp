@@ -64,6 +64,15 @@ FRandomStream* FindRandomStreamProperty(UObject* Object, const FName PropertyNam
 	return nullptr;
 }
 
+FIntProperty* FindIntProperty(UObject* Object, const FName PropertyName)
+{
+	if (!Object) {
+		return nullptr;
+	}
+
+	return FindFProperty<FIntProperty>(Object->GetClass(), PropertyName);
+}
+
 void SetBoolProperty(UObject* Object, const FName PropertyName, const bool bValue)
 {
 	if (!Object) {
@@ -108,49 +117,51 @@ AGenerationManager::AGenerationManager()
 void AGenerationManager::BeginPlay()
 {
 	Super::BeginPlay();
-	
-	aseed = 10;
-	UE_LOG(LogTemp, Warning, TEXT("MyNumber is now: %d"), aseed);
 }
 
 bool AGenerationManager::HavenStep(TArray<FTransform>& haven, float mina, float maxa, float mind, float maxd)
 {
-	UE_LOG(LogTemp, Warning, TEXT("MyNumber is now: %d  Part 2"), aseed);
 	return true;
 }
 void AGenerationManager::WallStep(TArray<FTransform>& haven, TArray<FTransform>& wall, float min, float max)
 {
-	UE_LOG(LogTemp, Warning, TEXT("MyNumber is now: %d  Part 3"), aseed);
 }
 void AGenerationManager::GenerateWalls(TArray<FTransform>& points, bool inlets, float min, float max)
 {
-	UE_LOG(LogTemp, Warning, TEXT("MyNumber is now: %d  Part 4"), aseed);
 }
 void AGenerationManager::InletFunction(FTransform begin, FTransform end, FRotator rotation, float min, float max, float length)
 {
-	UE_LOG(LogTemp, Warning, TEXT("MyNumber is now: %d  Part 5"), aseed);
 }
 void AGenerationManager::InletGeneration(TArray<FTransform>& points)
 {
-	UE_LOG(LogTemp, Warning, TEXT("MyNumber is now: %d  Part 6"), aseed);
 }
 void AGenerationManager::Clear()
 {
-	UE_LOG(LogTemp, Warning, TEXT("MyNumber is now: %d  Part 6"), aseed);
 }
 void AGenerationManager::SetSeed(int32 seed)
 {
-	aseed = seed;
-	stream.Initialize(aseed);
-	UE_LOG(LogTemp, Warning, TEXT("MyNumber is now: %d  Part 7"), aseed);
+	CachedSeed = seed;
+
+	if (FIntProperty* SeedProperty = FindIntProperty(this, TEXT("Seed"))) {
+		SeedProperty->SetPropertyValue_InContainer(this, seed);
+	}
+	else if (FIntProperty* LegacySeedProperty = FindIntProperty(this, TEXT("aseed"))) {
+		LegacySeedProperty->SetPropertyValue_InContainer(this, seed);
+	}
+
+	if (FRandomStream* StreamProperty = FindRandomStreamProperty(this, TEXT("stream"))) {
+		StreamProperty->Initialize(seed);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("GenerationManager seed set to %d."), seed);
 }
 void AGenerationManager::generateTerrain(FString type, float mina, float maxa, float mind, float maxd, int length)
 {
-	UE_LOG(LogTemp, Warning, TEXT("MyNumber is now: %d  Part 8"), aseed);
+	UE_LOG(LogTemp, Warning, TEXT("GenerationManager base generateTerrain called with type=%s length=%d."), *type, length);
 }
 void AGenerationManager::getGoal(int32 distance, FVector& location, FVector& left, FVector& right)
 {
-	UE_LOG(LogTemp, Warning, TEXT("MyNumber is now: %d  Part 9"), aseed);
+	UE_LOG(LogTemp, Warning, TEXT("GenerationManager base getGoal called for distance=%d."), distance);
 }
 
 void AGenerationManager::SpawnObstacles()
@@ -186,9 +197,6 @@ void AGenerationManager::SpawnObstaclesImmediate()
 	UE_LOG(LogTemp, Warning, TEXT("GenerationManager obstacle spawning started."));
 
 	TArray<FTransform>* RoadPoints = FindTransformArrayProperty(this, TEXT("road"));
-	if (!RoadPoints) {
-		RoadPoints = &road;
-	}
 
 	TArray<FTransform>* LeftPoints = FindTransformArrayProperty(this, TEXT("left"));
 	if (!LeftPoints) {
@@ -204,12 +212,9 @@ void AGenerationManager::SpawnObstaclesImmediate()
 	if (!GeneratedActors) {
 		GeneratedActors = FindActorArrayProperty(this, TEXT("generated"));
 	}
-	if (!GeneratedActors) {
-		GeneratedActors = &generated;
-	}
 
 	FRandomStream* StreamProperty = FindRandomStreamProperty(this, TEXT("stream"));
-	FRandomStream FallbackStream(aseed);
+	FRandomStream FallbackStream(CachedSeed);
 	FRandomStream& ObstacleStream = StreamProperty ? *StreamProperty : FallbackStream;
 
 	if (!ObstacleClass) {
@@ -305,7 +310,9 @@ void AGenerationManager::SpawnObstaclesImmediate()
 			SetRealProperty(SpawnedObstacle, TEXT("Speed"), ObstacleSpeed);
 
 			UGameplayStatics::FinishSpawningActor(SpawnedObstacle, SpawnTransform);
-			GeneratedActors->Add(SpawnedObstacle);
+			if (GeneratedActors) {
+				GeneratedActors->Add(SpawnedObstacle);
+			}
 			++SpawnedCount;
 		}
 
