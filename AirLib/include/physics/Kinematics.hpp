@@ -18,6 +18,11 @@ public:
         Wrench wrench;
         Accelerations accelerations;
 
+        State()
+            : pose(Pose::zero()), twist(Twist::zero()), wrench(Wrench::zero()), accelerations(Accelerations::zero())
+        {
+        }
+
         static State zero()
         {
             State zero_state;

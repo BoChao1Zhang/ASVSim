@@ -5,6 +5,7 @@ gymnasium
 stable-baselines3
 sb3-contrib
 wandb
+tensorboard
 cosysairsim
 pillow
 opencv-python

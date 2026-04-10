@@ -2,100 +2,239 @@
 
 ## Introduction
 
-In the Python Client of IDLab-ShippingSim, we have implemented a simple reinforcement learning (RL) example that enables researchers and developers to train autonomous vessel navigation agents. The RL environment provides a simulation for training agents to navigate vessels to target destinations while avoiding obstacles and collisions.
+The vessel reinforcement learning example in this repository is implemented under `PythonClient/reinforcement_learning/`.
+It trains a local navigation policy for procedurally generated port channels: the policy receives vessel state, waypoint geometry, and LiDAR obstacle cues, then outputs continuous thrust and rudder commands.
 
-The reinforcement learning system is located in `PythonClient/Vessel/`.
+The current training stack is:
 
-## Environment Overview (`Shipsim_gym.py`)
+- `PythonClient/reinforcement_learning/airgym/envs/vessel_env.py`
+- `PythonClient/reinforcement_learning/crossq_vessel.py`
+- `PythonClient/reinforcement_learning/eval_vessel.py`
+
+This repository no longer uses the older `PythonClient/Vessel/Shipsim_gym.py` + SAC example described in legacy documentation.
+
+## Environment Overview (`PCGVesselEnv`)
+
+`PCGVesselEnv` is a Gymnasium environment for procedural channel navigation with obstacle avoidance.
+It uses the existing vessel PCG RPC APIs:
+
+- `activateGeneration(False)`
+- `generatePortTerrain(...)`
+- `getGoal(initial_location, distance)`
+- `simAddObstacle(...)`
+- `getVesselState()`
+- `getLidarData()`
+
+### Task definition
+
+- The vessel starts at its spawn point.
+- At reset, the environment optionally regenerates a new procedural port terrain.
+- For each generated section, the environment queries `getGoal(...)` and builds a waypoint chain.
+- The active target is the current waypoint; when it is reached, the environment advances to the next waypoint.
+- The episode succeeds only when the final waypoint is reached.
+
+This means the RL policy is solving a local planning and control problem on top of the procedural channel generator, not generating the full global route directly.
 
 ### Environment Specifications
 
-The ShippingSim environment implements a continuous control task where an agent learns to navigate a vessel to a target location while avoiding obstacles. The agent was trained in a slightly modified version of the LakeEnv environment. Do note that this is just an example and the environment nor the reward and and action and observation spaces are optimized for RL training.
-
 | Specification | Details |
-|---------------|---------|
-| **Action Space** | Box(2,) - [thrust, rudder] |
-| **Action Range** | thrust: [0, 1], rudder: [0.4, 0.6] |
-| **Observation Space** | Box(57,) - vessel state + LiDAR data |
-| **Episode Length** | Maximum 200 timesteps |
-| **Success Condition** | Reach within 10 meters of goal |
+| --- | --- |
+| **Action Space** | `Box(2,)` - `[thrust, rudder_angle]` |
+| **Action Range** | `thrust: [0.0, 0.7]`, `rudder_angle: [0.48, 0.52]` |
+| **Observation Space** | `Box(54,)` - waypoint geometry + vessel state + LiDAR |
+| **Episode Length** | `800 / action_repeat` timesteps |
+| **Success Condition** | Reach within 10 meters of the final waypoint |
 
-### Observation Space Details
+### Observation Space
 
-The observation vector contains 57 elements:
+The observation vector has 54 elements:
 
 ```python
 obs = [
-    distance_to_goal_x,           # Current X distance to goal
-    distance_to_goal_y,           # Current Y distance to goal  
-    prev_distance_to_goal_x,      # Previous X distance to goal
-    prev_distance_to_goal_y,      # Previous Y distance to goal
-    heading,                      # Vessel heading (radians)
-    linear_velocity_x,            # X-axis linear velocity
-    linear_velocity_y,            # Y-axis linear velocity
-    linear_acceleration_x,        # X-axis linear acceleration
-    linear_acceleration_y,        # Y-axis linear acceleration
-    angular_acceleration_z,       # Z-axis angular acceleration
-    prev_thrust,                  # Previous thrust action
-    prev_rudder,                  # Previous rudder action
-    lidar_distances[0:45]         # 45 LiDAR distance measurements
+    dx_prev_waypoint,
+    dy_prev_waypoint,
+    dx_current_waypoint,
+    dy_current_waypoint,
+    distance_to_current_waypoint,
+    dx_next_waypoint,
+    dy_next_waypoint,
+    distance_to_next_waypoint,
+    heading_error,
+    sin_heading,
+    cos_heading,
+    linear_velocity_x,
+    linear_velocity_y,
+    linear_acceleration_x,
+    linear_acceleration_y,
+    angular_acceleration_z,
+    prev_thrust,
+    prev_rudder_angle,
+    lidar_sector_0,
+    ...,
+    lidar_sector_35,
 ]
 ```
 
-### Action Space Details
+The LiDAR observation is min-pooled into 36 sectors across 360 degrees.
+Ground and vessel labels are filtered out so the observation focuses on obstacle distances.
 
-| Action | Range | Description |
-|--------|-------|-------------|
-| `thrust` | [0, 1] | Forward propulsion control |
-| `rudder` | [0.4, 0.6] | Steering control (0.5 = straight) |
+### Reward Structure
 
-## SAC Training (`sac_example.py`)
+| Condition | Reward |
+| --- | --- |
+| Progress toward current waypoint | `prev_distance - current_distance` |
+| Time penalty | `-0.1` per step |
+| Collision | `-100.0` and terminate |
+| Final waypoint reached | `+500.0` and terminate |
+| Timeout | truncate episode |
 
-### Overview
-The SAC (Soft Actor-Critic) implementation provides state-of-the-art continuous control learning for vessel navigation. SAC is particularly suitable for this task due to its sample efficiency and stability in continuous action spaces.
+## Runtime Modes
+
+The training and evaluation scripts support two simulator modes:
+
+### 1. Attach to an existing Unreal Editor session
+
+Recommended for local development and debugging in this repository.
+
+```powershell
+"E:\ProgramFile\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe" "E:\code\ASVSim\Unreal\Environments\PortEnv\Blocks.uproject"
+cd E:\code\ASVSim\PythonClient\reinforcement_learning
+python crossq_vessel.py --launch-sim none --ip 127.0.0.1 --num-waypoints 1
+```
+
+When using `--launch-sim none`, the script does not start or kill the simulator.
+If the Editor runtime becomes invalid, the script raises a clear error instead of attempting to restart `Blocks.exe`.
+
+### 2. Launch a packaged simulator executable
+
+Useful for batch runs when you have a packaged build available.
+
+```powershell
+cd E:\code\ASVSim\PythonClient\reinforcement_learning
+python crossq_vessel.py --launch-sim exe --sim-path "E:\path\to\Blocks.exe"
+```
+
+In `exe` mode, the environment may restart the simulator automatically after a runtime failure.
+
+## Training (`crossq_vessel.py`)
+
+### Algorithm
+
+Training uses `CrossQ` from `sb3-contrib` with `VecNormalize` and checkpointing.
 
 ### Basic Usage
 
-```python
-import gymnasium as gym
-from stable_baselines3 import SAC
-from Vessel.envs.Shipsim_gym import ShippingSim
+Attach to a running Unreal Editor:
 
-# Create environment
-env = gym.make("ship-sim-v0")
-
-# Initialize SAC agent
-model = SAC(
-    "MlpPolicy", 
-    env, 
-    verbose=1,
-    tensorboard_log="./sac_ship_sim_tb/",
-    batch_size=32,
-    buffer_size=4000,
-    learning_starts=500,
-    train_freq=1,
-    tau=0.010,
-    target_entropy=-2,
-    stats_window_size=10
-)
-
-# Train the agent
-model.learn(total_timesteps=25000, log_interval=1)
-
-# Save the trained model
-model.save("sac_ship_sim_v0")
+```powershell
+python crossq_vessel.py `
+  --launch-sim none `
+  --ip 127.0.0.1 `
+  --timesteps 2500000 `
+  --terrain-regen 10 `
+  --num-obstacles 4 `
+  --num-dynamic-obstacles 0 `
+  --num-waypoints 1 `
+  --action-repeat 1 `
+  --seed 43
 ```
 
-## Environment Configuration
+Launch a packaged executable automatically:
 
-### AirSim Settings
+```powershell
+python crossq_vessel.py `
+  --launch-sim exe `
+  --sim-path "E:\path\to\Blocks.exe" `
+  --sim-wait 10 `
+  --timesteps 2500000
+```
 
-Ensure your `settings.json` includes proper vessel configuration:
+### Main Arguments
+
+| Argument | Default | Description |
+| --- | --- | --- |
+| `--ip` | `127.0.0.1` | Simulator RPC IP address |
+| `--timesteps` | `2500000` | Total training timesteps |
+| `--terrain-regen` | `10` | Regenerate PCG terrain every N episodes |
+| `--num-obstacles` | `4` | Number of static obstacles per episode |
+| `--num-dynamic-obstacles` | `0` | Number of moving obstacles per episode |
+| `--num-waypoints` | `1` | Number of waypoint sections to navigate |
+| `--launch-sim` | `none` | `none` attaches to an existing Editor/runtime, `exe` launches `--sim-path` |
+| `--sim-path` | `Blocks/Blocks.exe` | Packaged simulator executable for `exe` mode |
+| `--sim-wait` | `10` | Seconds to wait after launching the executable |
+| `--sim-log` | `false` | Save launched simulator output to `logs/sim.log` |
+| `--action-repeat` | `1` | Repeat each action N times |
+| `--seed` | `43` | Random seed |
+| `--wandb-key` | `None` | Enables Weights & Biases logging when set |
+
+### Hyperparameters
+
+```python
+model = CrossQ(
+    "MlpPolicy",
+    env,
+    learning_rate=0.0003,
+    gamma=0.99,
+    batch_size=256,
+    buffer_size=500000,
+    learning_starts=5000,
+    train_freq=1,
+    stats_window_size=10,
+    policy_kwargs=dict(net_arch=[512, 512]),
+)
+```
+
+### Output
+
+Training artifacts are written to:
+
+```text
+logs/
+├── training/
+│   ├── models/
+│   └── tb/
+└── sim.log
+```
+
+## Evaluation (`eval_vessel.py`)
+
+Evaluate while attached to a running Unreal Editor:
+
+```powershell
+python eval_vessel.py `
+  --launch-sim none `
+  --checkpoint logs/training/models/crossq_pcg_vessel_policy.zip `
+  --episodes 20
+```
+
+Or evaluate with an auto-launched packaged executable:
+
+```powershell
+python eval_vessel.py `
+  --launch-sim exe `
+  --sim-path "E:\path\to\Blocks.exe" `
+  --checkpoint logs/training/models/crossq_pcg_vessel_policy.zip
+```
+
+The evaluation script reports:
+
+- success rate
+- collision rate
+- timeout rate
+- average reward
+- average final distance to the final waypoint
+
+## Settings Requirements
+
+Ensure `settings.json` contains a vessel with LiDAR enabled.
+The RL environment assumes a vessel configuration compatible with:
 
 ```json
+{
+  "SettingsVersion": 2.0,
   "SimMode": "Vessel",
   "Vehicles": {
-    "Drone1": {
+    "milliampere": {
       "VehicleType": "MilliAmpere",
       "HydroDynamics": {
         "hydrodynamics_engine": "FossenCurrent"
@@ -106,41 +245,62 @@ Ensure your `settings.json` includes proper vessel configuration:
         "RemoteControlID": 0
       },
       "Sensors": {
-          "lidar1": {
-            "SensorType": 6,
-            "Enabled": true,
-            "NumberOfChannels": 1,
-            "RotationsPerSecond": 1,
-            "MeasurementsPerCycle": 450,
-            "range": 100000,
-            "X": 0,
-            "Y": 0,
-            "Z": -3.2,
-            "Roll": 0,
-            "Pitch": 0,
-            "Yaw": 0,
-            "VerticalFOVUpper": -2,
-            "VerticalFOVLower": -3,
-            "GenerateNoise": false,
-            "DrawDebugPoints": false,
-            "HorizontalFOVStart": -180,
-            "HorizontalFOVEnd": 180
-          }
+        "lidar1": {
+          "SensorType": 6,
+          "Enabled": true,
+          "NumberOfChannels": 8,
+          "RotationsPerSecond": 1,
+          "MeasurementsPerCycle": 450,
+          "range": 100000,
+          "X": 0,
+          "Y": 0,
+          "Z": -8.2,
+          "Roll": 0,
+          "Pitch": 0,
+          "Yaw": 0,
+          "VerticalFOVUpper": -2,
+          "VerticalFOVLower": -10,
+          "GenerateNoise": false,
+          "DrawDebugPoints": false,
+          "HorizontalFOVStart": -180,
+          "HorizontalFOVEnd": 180
+        },
+        "Distance": {
+          "SensorType": 5,
+          "Enabled": true,
+          "MaxDistance": 600,
+          "DrawDebugPoints": false
+        },
+        "Imu": {
+          "SensorType": 2,
+          "Enabled": true
+        }
       }
+    }
   }
 }
 ```
 
-### Custom Goal Positions
+## Python Dependencies
 
-Modify goal positions in the environment:
+Install the Python dependencies from the repository:
 
-```python
-class ShippingSim(gym.Env):
-    def __init__(self, options=None):
-        # ... existing initialization ...
-        self.goal_x = -60  # Modify target X coordinate
-        self.goal_y = -10  # Modify target Y coordinate
+```powershell
+cd E:\code\ASVSim\PythonClient
+pip install -r requirements.txt
 ```
 
-For additional examples and advanced usage, see the [Vessel API documentation](vessel_api.md) and [AirSim API reference](../apis.md).
+At minimum, the RL example depends on:
+
+- `gymnasium`
+- `stable-baselines3`
+- `sb3-contrib`
+- `wandb`
+- `numpy`
+- `cosysairsim`
+
+## Notes
+
+- The procedural channel generator is reused as the source of waypoint targets.
+- This example is meant to provide a runnable RL pipeline, not a final optimized reward or observation design.
+- If `activateGeneration(False)` or `getGoal(...)` fails while attached to Unreal Editor, verify that the correct map is loaded and the PCG plugins are enabled in the project.

@@ -30,12 +30,14 @@ class PCGVesselEnv(gym.Env):
         seed=42,
         sim_path="Blocks/Blocks.exe",
         sim_wait=10,
+        sim_launch_mode="none",
     ):
         super().__init__()
 
         self.ip_address = ip_address
         self.sim_path = sim_path
         self.sim_wait = sim_wait
+        self.sim_launch_mode = sim_launch_mode
         self.sim_proc = None  # managed externally or by _restart_sim
         self.terrain_regen_interval = terrain_regen_interval
         self.num_obstacles = num_obstacles
@@ -126,6 +128,10 @@ class PCGVesselEnv(gym.Env):
         # Activate PCG system once (landscape=False: landscape creation is editor-only)
         pcg_ok = self.vessel.activateGeneration(False)
         print(f"PCG activateGeneration returned: {pcg_ok}")
+        if not pcg_ok:
+            raise RuntimeError(
+                "activateGeneration(False) failed. Ensure the target world is fully loaded and the PCG plugins are enabled."
+            )
         # Terrain is generated on the first reset() call (episode 1)
 
     def _wait_collision_clear(self, timeout=2.0):
@@ -140,11 +146,21 @@ class PCGVesselEnv(gym.Env):
         self.vessel.confirmConnection()
         print("Connected to AirSim Vessel")
         self.vessel.enableApiControl(True)
-        self.vessel.armDisarm(True)
+        if not self.vessel.isApiControlEnabled():
+            raise RuntimeError("API control was not enabled for the vessel.")
+        arm_ok = self.vessel.armDisarm(True)
+        if arm_ok is False:
+            raise RuntimeError("armDisarm(True) failed for the vessel.")
+        self.vessel.getVesselState()
         self.vessel.setVesselControls("", VesselControls([0, 0], [0.5, 0.5]))
 
     def _restart_sim(self, max_retries=3):
         """Kill the simulator, restart it, reconnect, and re-activate PCG."""
+        if self.sim_launch_mode != "exe":
+            raise RuntimeError(
+                "Automatic simulator restart is only available when sim_launch_mode='exe'. "
+                "When attached to Unreal Editor, restart the runtime manually and rerun the script."
+            )
         for attempt in range(max_retries):
             try:
                 print(f"SIM RESTART: attempt {attempt + 1}/{max_retries}...")
@@ -217,7 +233,10 @@ class PCGVesselEnv(gym.Env):
                     break
 
         if not goal_valid:
-            raise RuntimeError("PCG terrain generation failed — getGoal returned invalid coordinates after all retries. Check the packaged build includes the PCG plugin.")
+            raise RuntimeError(
+                "PCG terrain generation failed because getGoal returned invalid coordinates after all retries. "
+                "Check that the world is ready and the PCG plugins are enabled."
+            )
 
         if len(final_result) >= 3:
             self.border_points = final_result[1:]
@@ -278,7 +297,7 @@ class PCGVesselEnv(gym.Env):
 
     def _destroy_obstacles(self):
         """Remove all buoy obstacles currently in the scene."""
-        # Always query the scene fresh — don't rely on cached names
+        # Always query the scene fresh; do not rely on cached names.
         all_buoys = self.vessel.simListSceneObjects(".*BP_BuoySpawn.*")
         for name in all_buoys:
             self.vessel.simDestroyObject(name)
@@ -346,10 +365,11 @@ class PCGVesselEnv(gym.Env):
         self.min_obstacle_distance = float(np.min(non_zero)) if len(non_zero) > 0 else 999.0
 
         # Min-pool 3600 points into 36 sectors (each 10°, 100 points)
-        lidar_distances = np.reshape(lidar_distances, (36, 100))
-        lidar_for_pool = np.where(lidar_distances > 0, lidar_distances, np.inf)
-        lidar_pooled = np.min(lidar_for_pool, axis=1)
-        lidar_pooled[lidar_pooled == np.inf] = 0.0  # no obstacle in sector
+        lidar_sectors = np.array_split(lidar_distances, 36)
+        lidar_pooled = np.zeros(36, dtype=np.float32)
+        for idx, sector in enumerate(lidar_sectors):
+            valid = sector[sector > 0]
+            lidar_pooled[idx] = float(np.min(valid)) if valid.size > 0 else 0.0
 
         # Heading from quaternion
         z = vessel_state.kinematics_estimated.orientation.z_val
@@ -415,7 +435,7 @@ class PCGVesselEnv(gym.Env):
         self.prev_distance_to_goal_x = dx_curr
         self.prev_distance_to_goal_y = dy_curr
 
-        # Collision check — only count collisions that happened after reset
+        # Only count collisions that happened after the current reset.
         col_info = self.vessel.simGetCollisionInfo()
         self.state["collision"] = (
             col_info.has_collided and col_info.time_stamp > self._reset_collision_ts
@@ -464,7 +484,7 @@ class PCGVesselEnv(gym.Env):
                 self.state["success"] = True
                 reward = 500.0
             else:
-                # Intermediate waypoint reached — advance to next
+                # Intermediate waypoint reached; advance to the next waypoint.
                 reached = self.waypoints[self.current_waypoint_idx]
                 self.prev_waypoint_x = reached[0]
                 self.prev_waypoint_y = reached[1]
@@ -488,17 +508,26 @@ class PCGVesselEnv(gym.Env):
             return self._step_inner(action)
         except Exception as e:
             print(f"SIM ERROR in step(): {e}")
-            self._restart_sim()
-            # Return a truncated episode so training continues
-            obs = np.zeros(self.single_obs_size * self.n_stack, dtype=np.float32)
-            info = {
-                "reward": 0.0, "thrust": 0.0, "rudder_angle": 0.5,
-                "distance_to_goal_x": 0.0, "distance_to_goal_y": 0.0,
-                "success": 0, "collision": 0,
-                "episode_num": self.episode_count, "end_reason": "sim_crash",
-                "waypoints_reached": 0,
-            }
-            return obs, 0.0, False, True, info
+            if self.sim_launch_mode == "exe":
+                self._restart_sim()
+                obs = np.zeros(self.single_obs_size * self.n_stack, dtype=np.float32)
+                info = {
+                    "reward": 0.0,
+                    "thrust": 0.0,
+                    "rudder_angle": 0.5,
+                    "distance_to_goal_x": 0.0,
+                    "distance_to_goal_y": 0.0,
+                    "success": 0,
+                    "collision": 0,
+                    "episode_num": self.episode_count,
+                    "end_reason": "sim_crash",
+                    "waypoints_reached": 0,
+                }
+                return obs, 0.0, False, True, info
+            raise RuntimeError(
+                "step() failed while attached to an external simulator/editor. "
+                "Restart the UE Editor or fix the runtime state, then rerun training."
+            ) from e
 
     def _step_inner(self, action):
         self.timestep += 1
@@ -557,9 +586,13 @@ class PCGVesselEnv(gym.Env):
             return self._reset_inner(seed=seed, options=options)
         except Exception as e:
             print(f"SIM ERROR in reset(): {e}")
-            self._restart_sim()
-            # Retry reset after restart
-            return self._reset_inner(seed=seed, options=options)
+            if self.sim_launch_mode == "exe":
+                self._restart_sim()
+                return self._reset_inner(seed=seed, options=options)
+            raise RuntimeError(
+                "reset() failed while attached to an external simulator/editor. "
+                "Ensure the target map is loaded, API control works, and PCG generation is available."
+            ) from e
 
     def _reset_inner(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -625,4 +658,7 @@ class PCGVesselEnv(gym.Env):
         return np.concatenate(list(self.frame_buffer)), {}
 
     def close(self):
-        self.vessel.reset()
+        try:
+            self.vessel.reset()
+        except Exception:
+            pass

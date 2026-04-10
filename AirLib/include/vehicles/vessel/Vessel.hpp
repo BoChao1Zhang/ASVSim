@@ -35,6 +35,7 @@ namespace msr {
             {
                 //reset rotors, kinematics and environment
                 PhysicsBody::resetImplementation();
+                hydrodynamics_->reset();
 
                 //reset sensors last after their ground truth has been reset
                 resetSensors();
@@ -181,6 +182,7 @@ namespace msr {
             void initialize(Kinematics* kinematics, Environment* environment)
             {
                 PhysicsBody::initialize(params_->getParams().mass, params_->getParams().mass_matrix, kinematics, environment);
+                hydrodynamics_->reset();
                 createWrenches(params_, wrenches_, environment);
                 thruster_count_ = params_->getParams().rudder_params.size();
 

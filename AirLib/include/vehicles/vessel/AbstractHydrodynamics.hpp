@@ -46,6 +46,17 @@ namespace msr { namespace airlib {
 			return eta_dot_;
 		}
 
+		virtual void reset() {
+			dampingForce_ = Vector3r::Zero();
+			coriolisForce_ = Vector3r::Zero();
+			nu_ = Vector3r::Zero();
+			current_ = Vector3r::Zero();
+			nu_dot_ = Vector3r::Zero();
+			eta_dot_ = Vector3r::Zero();
+			heading_ = 0.0f;
+			rudder_angle_ = 0.0f;
+		}
+
 		void setRudderAngle(float angle) {
 			rudder_angle_ = angle;
 		}

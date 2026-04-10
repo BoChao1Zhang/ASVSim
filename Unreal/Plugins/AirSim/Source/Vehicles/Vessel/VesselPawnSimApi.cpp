@@ -13,6 +13,37 @@
 
 using namespace msr::airlib;
 
+namespace
+{
+    Kinematics::State zeroVesselKinematics(const Kinematics::State& state, const Pose& pose)
+    {
+        Kinematics::State zeroed = state;
+        zeroed.pose = pose;
+        zeroed.twist = Twist::zero();
+        zeroed.wrench = Wrench::zero();
+        zeroed.accelerations = Accelerations::zero();
+        return zeroed;
+    }
+
+    void zeroPhysicsVelocities(APawn* pawn)
+    {
+        UAirBlueprintLib::RunCommandOnGameThread([pawn]() {
+            UAirBlueprintLib::resetSimulatePhysics(pawn);
+
+            auto phys_comps = UAirBlueprintLib::getPhysicsComponents(pawn);
+            for (auto* phys_comp : phys_comps) {
+                if (phys_comp == nullptr)
+                    continue;
+
+                phys_comp->SetAllPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+                phys_comp->SetAllPhysicsLinearVelocity(FVector::ZeroVector);
+                phys_comp->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+                phys_comp->SetPhysicsLinearVelocity(FVector::ZeroVector);
+            }
+        }, true);
+    }
+}
+
 VesselPawnSimApi::VesselPawnSimApi(const Params& params)
     : PawnSimApi(params)
 {
@@ -29,10 +60,10 @@ void VesselPawnSimApi::initialize()
     VectorMath::toEulerianAngle(pose.orientation, pitch, roll, yaw);
     pose.orientation = VectorMath::toQuaternion(0, 0, yaw);
 
-    Kinematics::State initial_kinematics = getKinematics()->getInitialState();
-    initial_kinematics.pose = pose;
+    Kinematics::State initial_kinematics = zeroVesselKinematics(getKinematics()->getInitialState(), pose);
     getKinematics()->initialize(initial_kinematics);
     getKinematics()->setState(initial_kinematics);
+    zeroPhysicsVelocities(getPawn());
 
     //create vehicle API
     std::shared_ptr<UnrealSensorFactory> sensor_factory = std::make_shared<UnrealSensorFactory>(getPawn(), &getNedTransform());
@@ -54,6 +85,7 @@ void VesselPawnSimApi::initialize()
     reset_pending_ = false;
     did_reset_ = false;
     setPose(pose, false);
+    zeroPhysicsVelocities(getPawn());
 }
 
 void VesselPawnSimApi::pawnTick(float dt)
@@ -157,10 +189,17 @@ void VesselPawnSimApi::setPose(const Pose& pose, bool ignore_collision)
 void VesselPawnSimApi::resetImplementation()
 {
     PawnSimApi::resetImplementation();
+    zeroPhysicsVelocities(getPawn());
+
+    Pose pose = getPose();
+    Kinematics::State reset_kinematics = zeroVesselKinematics(getKinematics()->getInitialState(), pose);
+    getKinematics()->initialize(reset_kinematics);
+    getKinematics()->setState(reset_kinematics);
 
     vehicle_api_->reset();
     phys_vehicle_->reset();
     vehicle_api_messages_.clear();
+    collision_response = msr::airlib::CollisionResponse();
 }
 
 //this is high frequency physics tick, flier gets ticked at rendering frame rate

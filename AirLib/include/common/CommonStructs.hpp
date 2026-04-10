@@ -18,6 +18,7 @@ namespace airlib
         Vector3r linear, angular;
 
         Twist()
+            : linear(Vector3r::Zero()), angular(Vector3r::Zero())
         {
         }
 
@@ -39,6 +40,7 @@ namespace airlib
         Vector3r force, torque;
 
         Wrench()
+            : force(Vector3r::Zero()), torque(Vector3r::Zero())
         {
         }
 
@@ -88,6 +90,7 @@ namespace airlib
         Vector3r angular;
 
         Momentums()
+            : linear(Vector3r::Zero()), angular(Vector3r::Zero())
         {
         }
 
@@ -109,6 +112,7 @@ namespace airlib
         Vector3r angular;
 
         Accelerations()
+            : linear(Vector3r::Zero()), angular(Vector3r::Zero())
         {
         }
 

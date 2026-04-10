@@ -45,6 +45,9 @@ namespace airlib
         {
             initial_position_ = position;
             initial_normal_ = normal;
+            position_ = position;
+            normal_ = normal;
+            current_wrench_ = Wrench::zero();
             drag_factor_ = drag_factor;
         }
 
