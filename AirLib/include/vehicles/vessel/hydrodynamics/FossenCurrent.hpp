@@ -14,8 +14,17 @@ namespace msr {
 
             virtual void computeCoriolis() override
             {
+                if (parameters_ == nullptr) {
+                    coriolisForce_ = Vector3r::Zero();
+                    return;
+                }
+
                 const VesselParams::Params& params = parameters_->getParams();
                 Vector3r relative_velocities = nu_ - current_;
+                if (!isFiniteVector(relative_velocities) || hasAbnormalMagnitude(relative_velocities, 1.0e4f)) {
+                    coriolisForce_ = Vector3r::Zero();
+                    return;
+                }
 
                 real_T u = relative_velocities(0);
                 real_T v = relative_velocities(1);
@@ -36,12 +45,24 @@ namespace msr {
                     c31, c32, 0;
 
                 coriolisForce_ = coriolisMatrix * relative_velocities;
+                if (!isFiniteVector(coriolisForce_) || hasAbnormalMagnitude(coriolisForce_, 1.0e6f)) {
+                    coriolisForce_ = Vector3r::Zero();
+                }
             }
 
             virtual void computeDamping() override
             {
+                if (parameters_ == nullptr) {
+                    dampingForce_ = Vector3r::Zero();
+                    return;
+                }
+
                 const VesselParams::Params& params = parameters_->getParams();
                 Vector3r relative_velocities = nu_ - current_;
+                if (!isFiniteVector(relative_velocities) || hasAbnormalMagnitude(relative_velocities, 1.0e4f)) {
+                    dampingForce_ = Vector3r::Zero();
+                    return;
+                }
                 
                 real_T u = relative_velocities(0);
                 real_T v = relative_velocities(1);
@@ -59,6 +80,9 @@ namespace msr {
                     0, d_32, d_33;
 
                 dampingForce_ = dampingMatrix * relative_velocities;
+                if (!isFiniteVector(dampingForce_) || hasAbnormalMagnitude(dampingForce_, 1.0e6f)) {
+                    dampingForce_ = Vector3r::Zero();
+                }
             }
 
         };

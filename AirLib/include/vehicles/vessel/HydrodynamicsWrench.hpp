@@ -16,6 +16,7 @@ namespace msr {
         public: //methods
             HydroDynamicsWrench(const Vector3r& position, const Vector3r& normal)
             {
+                output_ = Output();
                 initialize(position, normal);
             }
 
@@ -30,16 +31,22 @@ namespace msr {
                 //update environmental factors before we call base
                 updateEnvironmentalFactors();
 
-                //this will in turn call setWrench
-                PhysicsBodyVertex::update(delta);
-
                 //perform calculation
                 Vector3r forces = computation_method_();
+                const bool valid_forces =
+                    std::isfinite(forces.x()) && std::isfinite(forces.y()) && std::isfinite(forces.z()) &&
+                    forces.cwiseAbs().maxCoeff() <= 1.0e6f;
+                if (!valid_forces) {
+                    forces = Vector3r::Zero();
+                }
 
                 //update our state
                 output_.surge_force = forces(0);
                 output_.sway_force = forces(1);
                 output_.torque = forces(2);
+
+                //this will in turn call setWrench using the freshly computed output_
+                PhysicsBodyVertex::update(delta);
             }
 
             virtual void setComputationMethod(std::function<Vector3r()> func) override

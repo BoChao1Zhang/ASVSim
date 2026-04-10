@@ -78,6 +78,14 @@ namespace msr { namespace airlib {
 		virtual ~AbstractHydrodynamics() = default;
 
 	protected:
+		static bool isFiniteVector(const Vector3r& value) {
+			return std::isfinite(value.x()) && std::isfinite(value.y()) && std::isfinite(value.z());
+		}
+
+		static bool hasAbnormalMagnitude(const Vector3r& value, real_T threshold) {
+			return value.cwiseAbs().maxCoeff() > threshold;
+		}
+
 		VesselParams* parameters_ = nullptr;
 		Vector3r dampingForce_ = Vector3r::Zero();
 		Vector3r coriolisForce_ = Vector3r::Zero();

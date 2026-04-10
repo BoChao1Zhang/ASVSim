@@ -196,6 +196,15 @@ namespace msr {
                 hydros_ = std::span<std::unique_ptr<AbstractTau>>(wrenches_.begin(), wrenches_.begin() + hydro_count_);
                 thrusters_ = std::span<std::unique_ptr<AbstractTau>>(wrenches_.begin() + hydro_count_, wrenches_.end() - disturbance_count_);
                 disturbances_ = std::span<std::unique_ptr<AbstractTau>>(wrenches_.end() - disturbance_count_, wrenches_.end());
+
+                // Newly created vertices can enter the first physics tick before the world-level
+                // reset reaches them. Reset them explicitly so hydrodynamics starts from zeroed state.
+                for (auto& wrench : wrenches_) {
+                    wrench->reset();
+                }
+                for (auto& drag_vertex : drag_vertices_) {
+                    drag_vertex.reset();
+                }
             }
 
             static void createWrenches(const VesselParams* params, vector<std::unique_ptr<AbstractTau>>& wrenches, const Environment* environment)
