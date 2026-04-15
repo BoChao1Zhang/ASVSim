@@ -408,3 +408,5 @@ PythonClient/docs/_build
 /promo/
 /Unreal/Environments/BlocksComp/
 docker/LinuxBlocks/*
+/data/*
+!/data/README.md

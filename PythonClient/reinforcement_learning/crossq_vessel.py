@@ -3,6 +3,7 @@ import argparse
 import os
 import subprocess
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -12,6 +13,15 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from airgym.envs.vessel_env import PCGVesselEnv
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
+DATA_ROOT = REPO_ROOT / "data" / "reinforcement_learning"
+TRAINING_ROOT = DATA_ROOT / "training"
+MODEL_DIR = TRAINING_ROOT / "models"
+TB_DIR = TRAINING_ROOT / "tb"
+SIM_LOG_PATH = DATA_ROOT / "sim.log"
 
 try:
     import wandb
@@ -140,7 +150,12 @@ def main():
     )
     parser.add_argument("--sim-path", type=str, default="Blocks/Blocks.exe", help="Path to simulator executable when --launch-sim=exe")
     parser.add_argument("--sim-wait", type=int, default=10, help="Seconds to wait for simulator startup when --launch-sim=exe")
-    parser.add_argument("--sim-log", action="store_true", default=False, help="Log launched simulator output to logs/sim.log")
+    parser.add_argument(
+        "--sim-log",
+        action="store_true",
+        default=False,
+        help=f"Log launched simulator output to {SIM_LOG_PATH.as_posix()}",
+    )
     parser.add_argument("--action-repeat", type=int, default=1, help="Number of times to repeat each action")
     parser.add_argument("--seed", type=int, default=43, help="Random seed for reproducibility")
     parser.add_argument("--wandb-key", type=str, default=None, help="Weights & Biases API key (optional, disables wandb if not set)")
@@ -148,8 +163,8 @@ def main():
 
     validate_args(args)
 
-    os.makedirs("logs/training/models", exist_ok=True)
-    os.makedirs("logs/training/tb", exist_ok=True)
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    TB_DIR.mkdir(parents=True, exist_ok=True)
 
     if args.sim_log and args.launch_sim != "exe":
         print("Ignoring --sim-log because --launch-sim=none attaches to an existing simulator/editor.")
@@ -160,7 +175,7 @@ def main():
 
     try:
         if args.launch_sim == "exe":
-            sim_log_path = "logs/sim.log" if args.sim_log else None
+            sim_log_path = str(SIM_LOG_PATH) if args.sim_log else None
             sim_proc, sim_log_handle = start_simulator(args.sim_path, args.sim_wait, sim_log_path)
         else:
             print("Attach mode selected. Start UnrealEditor.exe with the target project and map before running training.")
@@ -206,7 +221,7 @@ def main():
             stats_window_size=10,
             seed=args.seed,
             device="auto",
-            tensorboard_log="logs/training/tb/",
+            tensorboard_log=str(TB_DIR),
             policy_kwargs=dict(net_arch=[512, 512]),
         )
 
@@ -216,7 +231,7 @@ def main():
         callbacks.append(
             CheckpointCallback(
                 save_freq=25000,
-                save_path="logs/training/models/",
+                save_path=str(MODEL_DIR),
                 name_prefix="crossq_pcg_vessel",
             )
         )
@@ -227,8 +242,8 @@ def main():
             callback=callbacks,
         )
 
-        model.save("logs/training/models/crossq_pcg_vessel_policy")
-        print("Training complete. Model saved to logs/training/models/")
+        model.save(str(MODEL_DIR / "crossq_pcg_vessel_policy"))
+        print(f"Training complete. Model saved to {MODEL_DIR.as_posix()}/")
 
     finally:
         if run is not None:

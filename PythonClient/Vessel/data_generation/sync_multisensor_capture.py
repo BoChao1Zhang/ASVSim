@@ -23,6 +23,8 @@ from PIL import Image
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PYTHONCLIENT_DIR = SCRIPT_DIR.parents[1]
+REPO_ROOT = SCRIPT_DIR.parents[2]
+DATA_ROOT = REPO_ROOT / "data" / "vessel"
 USER_AIRSIM_SETTINGS_PATH = Path.home() / "Documents" / "AirSim" / "settings.json"
 
 if str(PYTHONCLIENT_DIR) not in sys.path:
@@ -46,6 +48,8 @@ DEFAULT_OBJECT_PREFIXES = [
 PREFERRED_CAMERA_NAMES = ("capture_front", "frontcamera")
 PREFERRED_LIDAR_NAMES = ("lidar1", "lidar")
 PREFERRED_ECHO_NAMES = ("echo_center", "echo")
+NEUTRAL_ANGLE = 0.5
+MAX_THRUSTER_COUNT = 10
 
 
 def parse_args() -> argparse.Namespace:
@@ -81,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir",
-        default=str(SCRIPT_DIR / "dataset_multisensor"),
+        default=str(DATA_ROOT / "dataset_multisensor"),
         help="Directory that will contain the timestamped dataset run folder.",
     )
     parser.add_argument(
@@ -148,6 +152,35 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable API control for the vessel before capturing.",
     )
+    parser.add_argument(
+        "--drive-straight-throttle",
+        type=float,
+        default=0.0,
+        help="If > 0, drive the vessel straight during capture using this throttle.",
+    )
+    parser.add_argument(
+        "--drive-steering-angle",
+        type=float,
+        default=NEUTRAL_ANGLE,
+        help="Steering angle used while driving straight. 0.5 is neutral.",
+    )
+    parser.add_argument(
+        "--drive-thruster-indices",
+        default="0,1",
+        help="Comma-separated thruster indices to drive while capturing.",
+    )
+    parser.add_argument(
+        "--drive-warmup-seconds",
+        type=float,
+        default=0.0,
+        help="Optional straight-driving warmup before the first captured frame.",
+    )
+    parser.add_argument(
+        "--drive-resend-period",
+        type=float,
+        default=0.1,
+        help="How often to resend straight-driving controls while waiting between captures.",
+    )
     return parser.parse_args()
 
 
@@ -167,6 +200,58 @@ def clean_object_name(value) -> str:
 def matches_prefixes(object_name: str, object_prefixes: Sequence[str]) -> bool:
     lowered_name = object_name.lower()
     return any(lowered_name.startswith(prefix.lower()) for prefix in object_prefixes)
+
+
+def clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
+
+
+def parse_thruster_indices(raw_value: str) -> List[int]:
+    indices: List[int] = []
+    for chunk in raw_value.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        value = int(chunk)
+        if value < 0 or value >= MAX_THRUSTER_COUNT:
+            raise ValueError(
+                f"Thruster index {value} is out of range [0, {MAX_THRUSTER_COUNT - 1}]"
+            )
+        indices.append(value)
+    if not indices:
+        raise ValueError("At least one thruster index must be provided.")
+    return sorted(set(indices))
+
+
+def build_vessel_controls(
+    throttle: float, steering_angle: float, thruster_indices: Sequence[int]
+) -> airsim.VesselControls:
+    thrust_values = [0.0] * MAX_THRUSTER_COUNT
+    angle_values = [NEUTRAL_ANGLE] * MAX_THRUSTER_COUNT
+    for index in thruster_indices:
+        thrust_values[index] = throttle
+        angle_values[index] = steering_angle
+    return airsim.VesselControls(thrust_values, angle_values)
+
+
+def maintain_vessel_controls(
+    client: airsim.VesselClient,
+    vehicle_name: str,
+    controls: airsim.VesselControls,
+    duration_seconds: float,
+    resend_period_seconds: float,
+) -> None:
+    if duration_seconds <= 0:
+        return
+
+    deadline = time.time() + duration_seconds
+    resend_period_seconds = max(0.02, resend_period_seconds)
+    while True:
+        now = time.time()
+        if now >= deadline:
+            break
+        client.setVesselControls(vehicle_name, controls)
+        time.sleep(min(resend_period_seconds, deadline - now))
 
 
 def load_settings(settings_path: Path) -> Dict[str, object]:
@@ -569,6 +654,18 @@ def main() -> int:
     args = parse_args()
     settings = load_settings(Path(args.settings_path).expanduser())
     resolved_targets = resolve_capture_targets(settings, args)
+    drive_enabled = args.drive_straight_throttle > 0.0
+    drive_thruster_indices = parse_thruster_indices(args.drive_thruster_indices)
+    drive_controls = build_vessel_controls(
+        throttle=clamp(args.drive_straight_throttle, 0.0, 1.0),
+        steering_angle=clamp(args.drive_steering_angle, 0.0, 1.0),
+        thruster_indices=drive_thruster_indices,
+    )
+    stop_controls = build_vessel_controls(
+        throttle=0.0,
+        steering_angle=NEUTRAL_ANGLE,
+        thruster_indices=drive_thruster_indices,
+    )
 
     lidar_rate_hz = float(resolved_targets["lidar_cfg"].get("RotationsPerSecond", 0.0))
     echo_rate_hz = float(
@@ -589,7 +686,7 @@ def main() -> int:
     lidar_name = resolved_targets["lidar_name"]
     echo_name = resolved_targets["echo_name"]
 
-    if args.enable_api_control:
+    if args.enable_api_control or drive_enabled:
         client.enableApiControl(True, vehicle_name)
 
     object_specs = build_object_specs(
@@ -609,6 +706,13 @@ def main() -> int:
         f"Selected {len(object_specs)} segmentation objects for detection labels. "
         f"Max ages: lidar={max_lidar_age_ns} ns echo={max_echo_age_ns} ns"
     )
+    if drive_enabled:
+        print(
+            "Straight-drive capture enabled:",
+            f"throttle={args.drive_straight_throttle:.2f}",
+            f"steering_angle={args.drive_steering_angle:.2f}",
+            f"thrusters={drive_thruster_indices}",
+        )
 
     frame_index_path = run_dir / "meta" / "frame_index.csv"
     write_frame_index_header(frame_index_path)
@@ -618,15 +722,35 @@ def main() -> int:
 
     try:
         client.simPause(False)
+        if drive_enabled:
+            client.setVesselControls(vehicle_name, drive_controls)
+            maintain_vessel_controls(
+                client=client,
+                vehicle_name=vehicle_name,
+                controls=drive_controls,
+                duration_seconds=args.drive_warmup_seconds,
+                resend_period_seconds=args.drive_resend_period,
+            )
 
         for frame_id in range(args.num_frames):
             if frame_id > 0 and args.capture_interval > 0:
-                time.sleep(args.capture_interval)
+                if drive_enabled:
+                    maintain_vessel_controls(
+                        client=client,
+                        vehicle_name=vehicle_name,
+                        controls=drive_controls,
+                        duration_seconds=args.capture_interval,
+                        resend_period_seconds=args.drive_resend_period,
+                    )
+                else:
+                    time.sleep(args.capture_interval)
 
             frame_capture = None
 
             for attempt in range(1, args.retry_limit + 1):
                 client.simPause(False)
+                if drive_enabled:
+                    client.setVesselControls(vehicle_name, drive_controls)
                 lidar_data, echo_data = wait_for_fresh_sensor_data(
                     client=client,
                     vehicle_name=vehicle_name,
@@ -793,7 +917,9 @@ def main() -> int:
             )
     finally:
         client.simPause(False)
-        if args.enable_api_control:
+        if drive_enabled:
+            client.setVesselControls(vehicle_name, stop_controls)
+        if args.enable_api_control or drive_enabled:
             client.enableApiControl(False, vehicle_name)
 
     print(f"Dataset written to: {run_dir}")

@@ -1,8 +1,8 @@
 """Evaluate a trained CrossQ checkpoint in the simulator.
 
 Usage:
-    python eval_vessel.py --checkpoint logs/training/models/crossq_pcg_vessel_25000_steps.zip
-    python eval_vessel.py --checkpoint logs/training/models/crossq_pcg_vessel_policy.zip --episodes 200
+    python eval_vessel.py --checkpoint data/reinforcement_learning/training/models/crossq_pcg_vessel_25000_steps.zip
+    python eval_vessel.py --checkpoint data/reinforcement_learning/training/models/crossq_pcg_vessel_policy.zip --episodes 200
 """
 
 import setup_path
