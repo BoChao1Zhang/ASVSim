@@ -172,7 +172,18 @@ namespace msr {
 
             AbstractTau::Output getRudderOutput(uint rotor_index) const
             {
-                return wrenches_.at(2)->getOutput();
+                const uint thruster_index = hydro_count_ + rotor_index;
+                const uint thruster_end = static_cast<uint>(wrenches_.size()) - disturbance_count_;
+                if (thruster_index >= thruster_end) {
+                    return AbstractTau::Output();
+                }
+
+                return wrenches_.at(thruster_index)->getOutput();
+            }
+
+            uint getThrusterCount() const
+            {
+                return static_cast<uint>(thruster_count_);
             }
 
             virtual ~Vessel() = default;

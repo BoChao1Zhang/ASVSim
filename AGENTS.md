@@ -160,6 +160,13 @@ FlyingExampleMap vessel enters runtime
   - hydrodynamics wrench state shadowing / uninitialized state
   - Unreal-side debug draw from async physics/sensor threads
 
+## Critical Vessel Startup Finding
+
+- The bad PIE startup behavior matches the old runtime behavior of `HydroDynamicsWrench` and `FossenCurrent`: on the first tick, stale output could be written into the body `wrench` before the current-frame hydrodynamics force was computed, and there was no abnormal velocity / abnormal force clamping on that path.
+- The current source tree already contains the protections for that issue, but Unreal runtime behavior depends on the mirrored AirLib headers under `Unreal\Plugins\AirSim\Source\AirLib\include\...`, not only the top-level `AirLib\include\...` copy. If those mirrored headers are stale, the editor can keep running the old first-tick behavior even though the top-level AirLib headers look fixed.
+- For this reason, any vessel startup / hydrodynamics header fix must be followed by a **clean** `BlocksEditor` rebuild before trusting PIE validation. A normal incremental build is not sufficient when the result looks suspicious.
+- Additional hardening now required for vessel startup: after `VesselPawnSimApi::initialize()`, call `reset()` immediately during vehicle creation so the vessel enters the physics world from a deterministic zero state instead of relying only on later world-level reset timing.
+
 ## Typical Commands
 
 ### Full native + Unreal validation

@@ -8,6 +8,7 @@
 #include "AirBlueprintLib.h"
 #include "common/CommonStructs.hpp"
 #include "common/Common.hpp"
+#include <algorithm>
 
 
 AVesselPawn::AVesselPawn()
@@ -89,7 +90,8 @@ void AVesselPawn::NotifyHit(class UPrimitiveComponent* MyComp, class AActor* Oth
 void AVesselPawn::setRudderSpeed(const std::vector<VesselPawnEvents::RudderInfo>& rudder_infos)
 {
     constexpr int RudderFactor = 10;
-    for (auto rotor_index = 0; rotor_index < rudder_infos.size(); ++rotor_index) {
+    const size_t active_rudder_count = std::min<size_t>(rudder_infos.size(), rudder_count);
+    for (size_t rotor_index = 0; rotor_index < active_rudder_count; ++rotor_index) {
         auto comp = rotating_movements_[rotor_index];
         if (comp != nullptr) {
             comp->RotationRate.Yaw =

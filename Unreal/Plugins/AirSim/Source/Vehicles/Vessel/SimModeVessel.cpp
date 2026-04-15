@@ -166,7 +166,9 @@ std::unique_ptr<PawnSimApi> ASimModeVessel::createVehicleSimApi(
 	auto vehicle_sim_api = std::unique_ptr<PawnSimApi>(new VesselPawnSimApi(pawn_sim_api_params));
 	// 	vehicle_pawn->getKeyBoardControls(), vehicle_pawn->getVehicleMovementComponent()));
 	vehicle_sim_api->initialize();
-	// vehicle_sim_api->reset();
+	// Force a deterministic zero-state before the physics world registers the body.
+	// Without this early reset, vessel startup can intermittently reuse stale first-tick data.
+	vehicle_sim_api->reset();
 	return vehicle_sim_api;
 }
 msr::airlib::VehicleApiBase* ASimModeVessel::getVehicleApi(const PawnSimApi::Params& pawn_sim_api_params,

@@ -288,6 +288,7 @@
     <ClInclude Include="SettingsTest.hpp" />
     <ClInclude Include="SimpleFlightTest.hpp" />
     <ClInclude Include="TestBase.hpp" />
+    <ClInclude Include="VesselHydrodynamicsTest.hpp" />
     <ClInclude Include="WorkerThreadTest.hpp" />
     <ClInclude Include="PixhawkTest.hpp" />
   </ItemGroup>

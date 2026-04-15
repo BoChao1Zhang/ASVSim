@@ -76,7 +76,7 @@ void VesselPawnSimApi::initialize()
     phys_vehicle_ = std::make_unique<Vessel>(vehicle_params_.get(), hydrodynamics_.get(), vehicle_api_.get(),
                                 getKinematics(), getEnvironment());
     phys_vehicle_->setName(std::string(TCHAR_TO_UTF8(*getPawn()->GetName())));
-    rotor_count_ = phys_vehicle_->wrenchVertexCount();
+    rotor_count_ = phys_vehicle_->getThrusterCount();
     rudder_info.assign(rotor_count_, RudderInfo());
 
     //initialize private vars
