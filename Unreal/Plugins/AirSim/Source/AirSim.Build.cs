@@ -93,6 +93,11 @@ public class AirSim : ModuleRules
         PublicIncludePaths.Add(Path.Combine(AirLibPath, "deps", "eigen3"));
         AddOSLibDependencies(Target);
 
+        if (Target.bBuildEditor)
+        {
+            PrivateDependencyModuleNames.Add("UnrealEd");
+        }
+
         SetupCompileMode(CompileMode.HeaderOnlyWithRpc, Target);
     }
 

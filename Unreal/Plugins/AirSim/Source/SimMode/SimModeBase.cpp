@@ -2359,20 +2359,24 @@ bool ASimModeBase::generatePortTerrain(const std::string& type, int seed, int le
         const bool bHasValidPathData = HasValidGenerationPathData(GenerationManager, RoadCount, BoundaryCount);
         UE_LOG(LogTemp, Warning, TEXT("Terrain Generated. road=%d boundary=%d"), RoadCount, BoundaryCount);
 
-        UFunction* SpawnObstacles = GenerationManager->FindFunction(FName("SpawnObstacles"));
         if (!bHasValidPathData) {
             UE_LOG(LogTemp, Warning, TEXT("GenerationManager path data is incomplete after generateTerrain. Skipping obstacle placement."));
         }
-        else if (SpawnObstacles) {
-            GenerationManager->ProcessEvent(SpawnObstacles, nullptr);
-            UE_LOG(LogTemp, Warning, TEXT("Obstacle placement triggered"));
-        }
         else {
-            UE_LOG(LogTemp, Warning, TEXT("GenerationManager is missing SpawnObstacles. Falling back to native obstacle placement."));
+            // The BP generationManager.uasset inherits from AActor directly (not
+            // from AGenerationManager) so FindFunction cannot reach the new C++
+            // UFUNCTIONs. We call the reflection-based native entry point that
+            // operates on the BP's road/left/right/Generated/stream properties.
             TWeakObjectPtr<AActor> WeakGenerationManager(GenerationManager);
             UAirBlueprintLib::RunCommandOnGameThread([WeakGenerationManager]() {
                 if (WeakGenerationManager.IsValid()) {
-                    SpawnRandomObstaclesForGenerationManager(WeakGenerationManager.Get());
+                    const int32 Spawned = AGenerationManager::ApplyAdvancedPCGNative(WeakGenerationManager.Get());
+                    UE_LOG(LogTemp, Warning, TEXT("ApplyAdvancedPCGNative returned spawned=%d."), Spawned);
+                    if (Spawned < 0) {
+                        // Negative means the advanced native path could not execute at all.
+                        // A valid zero means "executed successfully, but placed nothing".
+                        SpawnRandomObstaclesForGenerationManager(WeakGenerationManager.Get());
+                    }
                 }
             }, true);
         }

@@ -5,14 +5,48 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Math/Transform.h"
+#include "Math/RandomStream.h"
 #include "GenerationManager.generated.h"
+
+USTRUCT(BlueprintType)
+struct FPCGObstacleSpec
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PCG Obstacle")
+	TSoftClassPtr<AActor> ObstacleClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PCG Obstacle", meta = (ClampMin = "0.0"))
+	float FootprintRadius = 150.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PCG Obstacle", meta = (ClampMin = "0.0"))
+	float Weight = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PCG Obstacle")
+	float MinSpeed = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PCG Obstacle")
+	float MaxSpeed = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PCG Obstacle")
+	bool bSupportsVelocityProperties = true;
+};
+
+UENUM(BlueprintType)
+enum class EPCGObstaclePattern : uint8
+{
+	Single  UMETA(DisplayName = "Single"),
+	Gate    UMETA(DisplayName = "Gate"),
+	Slalom  UMETA(DisplayName = "Slalom"),
+	Cluster UMETA(DisplayName = "Cluster"),
+};
 
 UCLASS()
 class AIRSIM_API AGenerationManager : public AActor
 {
 	GENERATED_BODY()
-	
-public:	
+
+public:
 	// Sets default values for this actor's properties
 	AGenerationManager();
 
@@ -61,6 +95,68 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles")
 	float ObstacleSpeedMax = 0.0f;
 
+	// ---- Advanced PCG: difficulty / density ----
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles|Advanced", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DifficultyLevel = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles|Advanced", meta = (ClampMin = "0.0"))
+	float ObstaclesPerKm = 12.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles|Advanced", meta = (ClampMin = "0"))
+	int32 ObstacleHardCap = 40;
+
+	// ---- Advanced PCG: navigability ----
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles|Advanced", meta = (ClampMin = "50.0"))
+	float VesselBeamCm = 300.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles|Advanced", meta = (ClampMin = "1.0"))
+	float ClearanceMultiple = 2.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles|Advanced", meta = (ClampMin = "25.0"))
+	float GridCellSizeCm = 100.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles|Advanced", meta = (ClampMin = "1"))
+	int32 MaxPlacementRetries = 20;
+
+	// ---- Advanced PCG: channel width profile ----
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Channel|Advanced", meta = (ClampMin = "200.0"))
+	float ChannelWidthMinCm = 1400.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Channel|Advanced", meta = (ClampMin = "200.0"))
+	float ChannelWidthMaxCm = 3200.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Channel|Advanced", meta = (ClampMin = "0.0"))
+	float ChannelWidthFreq = 0.8f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Channel|Advanced", meta = (ClampMin = "0"))
+	int32 SpineChaikinIter = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Channel|Advanced", meta = (ClampMin = "100.0"))
+	float SpineResampleCm = 500.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Channel|Advanced", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float ChicaneProbability = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Channel|Advanced", meta = (ClampMin = "0.0", ClampMax = "0.9"))
+	float ChicaneLateralRatio = 0.4f;
+
+	// ---- Advanced PCG: placement pattern weights ----
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles|Advanced", meta = (ClampMin = "0.0"))
+	float PatternWeightSingle = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles|Advanced", meta = (ClampMin = "0.0"))
+	float PatternWeightGate = 0.30f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles|Advanced", meta = (ClampMin = "0.0"))
+	float PatternWeightSlalom = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles|Advanced", meta = (ClampMin = "0.0"))
+	float PatternWeightCluster = 0.10f;
+
+	// ---- Advanced PCG: obstacle catalog (reused map assets) ----
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Obstacles|Advanced")
+	TArray<FPCGObstacleSpec> ObstacleCatalog;
+
 	UFUNCTION(BlueprintCallable, Category = "LevelSetup")
 	bool HavenStep(UPARAM(ref) TArray<FTransform>& haven, float mina, float maxa, float mind, float maxd);
 
@@ -91,6 +187,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "LevelSetup")
 	void SpawnObstacles();
 
+	UFUNCTION(BlueprintCallable, Category = "LevelSetup")
+	int32 RefineChannelGeometry();
+
+	UFUNCTION(BlueprintCallable, Category = "LevelSetup")
+	int32 SpawnAdvancedObstacles();
+
+	// Reflection-based entry point: works on ANY actor that exposes the
+	// road/left/right/Generated/stream properties (including BP-only actors
+	// that do not derive from AGenerationManager).
+	// Returns the number of obstacles actually spawned (>=0).
+	static int32 ApplyAdvancedPCGNative(AActor* GenerationManagerActor);
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
@@ -104,4 +212,5 @@ private:
 
 	void SpawnObstaclesImmediate();
 
+	void InitializeDefaultObstacleCatalog();
 };

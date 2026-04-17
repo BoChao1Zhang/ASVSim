@@ -31,6 +31,7 @@ class PCGVesselEnv(gym.Env):
         sim_path="Blocks/Blocks.exe",
         sim_wait=10,
         sim_launch_mode="none",
+        use_c_side_pcg_obstacles=False,
     ):
         super().__init__()
 
@@ -47,6 +48,14 @@ class PCGVesselEnv(gym.Env):
         self.step_sleep = step_sleep
         self.action_repeat = action_repeat
         self.base_seed = seed
+        # When True the native AGenerationManager::SpawnAdvancedObstacles path
+        # already populates a navigable, mixed-class obstacle set; the Python
+        # helpers below short-circuit and defer cleanup to the Blueprint's own
+        # Clear() step (which destroys everything in the Generated array).
+        # Default is False to preserve backward-compatible behavior for existing
+        # training/eval scripts (eval_vessel.py, crossq_vessel.py) that only
+        # pass num_obstacles / num_dynamic_obstacles.
+        self.use_c_side_pcg_obstacles = use_c_side_pcg_obstacles
 
         self.n_stack = 1
         self.timestep = 0
@@ -260,6 +269,12 @@ class PCGVesselEnv(gym.Env):
 
     def _spawn_obstacles(self):
         """Spawn random obstacles between vessel and goal."""
+        if self.use_c_side_pcg_obstacles:
+            # Native SpawnAdvancedObstacles already populated the Blueprint's
+            # Generated array during generatePortTerrain. Do nothing here;
+            # cleanup also stays off (handled by BP Clear on regen).
+            return
+
         if self.goal_x == 0.0 and self.goal_y == 0.0:
             print("WARNING: goal is (0,0), skipping obstacle spawn to avoid physics explosion")
             return
@@ -275,6 +290,10 @@ class PCGVesselEnv(gym.Env):
         start_x_cm = start_x * 100
         start_y_cm = start_y * 100
 
+        # Snapshot existing obstacle-class actors so we can attribute only the
+        # newly-spawned ones to this episode (preserves level-placed ships).
+        baseline = self._snapshot_obstacle_names()
+
         for _ in range(self.num_obstacles):
             # Random fraction along the path (avoid placing too close to start/goal)
             frac = self.rng.uniform(0.15, 0.85)
@@ -287,24 +306,58 @@ class PCGVesselEnv(gym.Env):
             pose = Pose(Vector3r(obs_x, obs_y, 250), Quaternionr())
             self.vessel.simAddObstacle(pose, 0, "buoy")
 
-        # Track obstacle names for cleanup
-        self._update_obstacle_list()
+        # Record only the names that appeared since the baseline.
+        after = self._snapshot_obstacle_names()
+        for name in after - baseline:
+            if name not in self.spawned_obstacle_names:
+                self.spawned_obstacle_names.append(name)
 
-    def _update_obstacle_list(self):
-        """Find spawned obstacle actors by name pattern."""
-        all_objects = self.vessel.simListSceneObjects(".*BP_BuoySpawn.*")
-        self.spawned_obstacle_names = all_objects
+    # Blueprint classes produced by the legacy RPC spawn path. Used ONLY for
+    # a snapshot-diff to attribute newly created actors to this episode; we
+    # never blindly destroy every match because the training level itself may
+    # have pre-placed vessels of the same class.
+    _OBSTACLE_NAME_PATTERNS = [
+        ".*BP_BuoySpawn.*",
+        ".*Boat_Blueprint.*",
+        ".*Barge_Blueprint.*",
+        ".*BP_CargoPawn.*",
+        ".*BP_NPCSpawn.*",
+    ]
+
+    def _snapshot_obstacle_names(self):
+        """Return the set of current scene actor names matching obstacle-class patterns."""
+        found = set()
+        for pattern in self._OBSTACLE_NAME_PATTERNS:
+            try:
+                found.update(self.vessel.simListSceneObjects(pattern))
+            except Exception as exc:
+                print(f"WARNING: simListSceneObjects({pattern}) failed: {exc}")
+        return found
 
     def _destroy_obstacles(self):
-        """Remove all buoy obstacles currently in the scene."""
-        # Always query the scene fresh; do not rely on cached names.
-        all_buoys = self.vessel.simListSceneObjects(".*BP_BuoySpawn.*")
-        for name in all_buoys:
-            self.vessel.simDestroyObject(name)
+        """Remove only the obstacles this environment explicitly spawned via RPC.
+
+        When use_c_side_pcg_obstacles=True, the native SpawnAdvancedObstacles path
+        owns the Generated[] array and BP Clear() destroys them during regen;
+        Python must not interfere or the scene will be wiped after each episode.
+        """
+        if self.use_c_side_pcg_obstacles:
+            return
+
+        for name in list(self.spawned_obstacle_names):
+            try:
+                self.vessel.simDestroyObject(name)
+            except Exception as exc:
+                print(f"WARNING: simDestroyObject({name}) failed: {exc}")
         self.spawned_obstacle_names = []
 
     def _spawn_dynamic_obstacles(self):
         """Spawn moving obstacles using the simulator's built-in movement."""
+        if self.use_c_side_pcg_obstacles:
+            # Dynamic obstacles (speed>0 entries in the native catalog) are already
+            # handled by SpawnAdvancedObstacles; skip the RPC duplicate.
+            return
+
         if self.num_dynamic_obstacles <= 0:
             return
 
@@ -317,6 +370,8 @@ class PCGVesselEnv(gym.Env):
         goal_x_cm = self.goal_x * 100
         goal_y_cm = self.goal_y * 100
 
+        baseline = self._snapshot_obstacle_names()
+
         for _ in range(self.num_dynamic_obstacles):
             frac = self.rng.uniform(0.2, 0.8)
             lateral_offset = self.rng.uniform(-2000, 2000)
@@ -327,6 +382,11 @@ class PCGVesselEnv(gym.Env):
             speed = float(self.rng.uniform(500, 1500))
             pose = Pose(Vector3r(obs_x, obs_y, 250), Quaternionr())
             self.vessel.simAddObstacle(pose, speed, "boat")
+
+        after = self._snapshot_obstacle_names()
+        for name in after - baseline:
+            if name not in self.spawned_obstacle_names:
+                self.spawned_obstacle_names.append(name)
 
     def _get_obs(self):
         """Get vessel state and LiDAR observations."""
