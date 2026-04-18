@@ -13,6 +13,9 @@ from collections import deque
 import gymnasium as gym
 from gymnasium import spaces
 
+from airgym.envs.reward import RewardComputer
+from diagnostics import diag_log
+
 
 class PCGVesselEnv(gym.Env):
     """Gymnasium environment for vessel RL training with PCG terrain randomization."""
@@ -32,6 +35,16 @@ class PCGVesselEnv(gym.Env):
         sim_wait=10,
         sim_launch_mode="none",
         use_c_side_pcg_obstacles=False,
+        terrain_length=10,
+        angle_range=None,
+        terrain_min_width_cm=5000.0,
+        terrain_max_width_cm=10000.0,
+        reward_config=None,
+        n_stack=1,
+        lidar_noise_sigma=0.0,
+        heading_noise_sigma=0.0,
+        waypoint_radius=10.0,
+        yaw_angle_scale=0.25,
     ):
         super().__init__()
 
@@ -56,11 +69,29 @@ class PCGVesselEnv(gym.Env):
         # training/eval scripts (eval_vessel.py, crossq_vessel.py) that only
         # pass num_obstacles / num_dynamic_obstacles.
         self.use_c_side_pcg_obstacles = use_c_side_pcg_obstacles
-
-        self.n_stack = 1
+        self.terrain_length = int(terrain_length)
+        self.angle_range = [-45.0, 45.0] if angle_range is None else [float(angle_range[0]), float(angle_range[1])]
+        self.terrain_min_width_cm = float(terrain_min_width_cm)
+        self.terrain_max_width_cm = float(terrain_max_width_cm)
+        self.reward_computer = RewardComputer(reward_config or {})
+        self.n_stack = int(n_stack)
+        self.lidar_noise_sigma = float(lidar_noise_sigma)
+        self.heading_noise_sigma = float(heading_noise_sigma)
+        self.waypoint_radius = float(waypoint_radius)
+        self.yaw_angle_scale = float(yaw_angle_scale)
         self.timestep = 0
         self.episode_count = 0
         self.rng = np.random.RandomState(seed)
+        self._next_episode_params = {}
+        self._forced_terrain_seed = None
+        self._force_terrain_regen = False
+        self.min_obstacle_distance = 999.0
+        self.cross_track_error = 0.0
+        self.prev_reward_state = None
+        self.current_obstacles = []
+        self.episode_trajectory = []
+        self.episode_path_length = 0.0
+        self.initial_final_goal_distance = 1.0
 
         # Goal and terrain state
         self.goal_x = 0.0
@@ -81,13 +112,11 @@ class PCGVesselEnv(gym.Env):
         self._reset_collision_ts = 0
 
         # Previous state tracking
-        self.prev_actions = np.zeros(2)
+        self.prev_actions = np.zeros(2, dtype=np.float32)
         self.prev_distance_to_goal_x = 0.0
         self.prev_distance_to_goal_y = 0.0
         self._waypoint_start_distance = 1.0
         self._next_distance_milestone = None
-        self._reward_prev_dist_x = 0.0
-        self._reward_prev_dist_y = 0.0
 
         self.state = {
             "position": np.zeros(3),
@@ -97,13 +126,16 @@ class PCGVesselEnv(gym.Env):
             "success": False,
             "distance_to_goal_x": 0.0,
             "distance_to_goal_y": 0.0,
+            "heading": 0.0,
+            "heading_error": 0.0,
+            "cross_track_error": 0.0,
         }
 
 
-        # Action space: [thrust, rudder_angle]
+        # Action space: [thrust, yaw_cmd]
         self.action_space = spaces.Box(
-            low=np.array([0.0, 0.48]),
-            high=np.array([0.7, 0.52]),
+            low=np.array([0.0, -1.0], dtype=np.float32),
+            high=np.array([1.0, 1.0], dtype=np.float32),
             shape=(2,),
             dtype=np.float32,
         )
@@ -111,7 +143,7 @@ class PCGVesselEnv(gym.Env):
         # Single-frame observation: 54-dim vector
         # 2 prev waypoint dist + 2 curr waypoint dist + 2 next waypoint dist
         # + 1 heading_error + 2 heading (sin, cos) + 2 velocity + 3 acceleration
-        # + 2 prev actions (thrust, rudder_angle)
+        # + 2 prev actions (thrust, yaw_cmd)
         # + 36 lidar (3600 points min-pooled into 36 sectors of 10°)
         self.single_obs_size = 54
 
@@ -143,6 +175,52 @@ class PCGVesselEnv(gym.Env):
             )
         # Terrain is generated on the first reset() call (episode 1)
 
+    def set_next_episode_params(self, **kwargs):
+        allowed = {
+            "num_obstacles",
+            "num_dynamic_obstacles",
+            "goal_distance",
+            "terrain_length",
+            "angle_range",
+            "terrain_seed",
+            "force_terrain_regen",
+        }
+        for key, value in kwargs.items():
+            if key not in allowed:
+                raise ValueError(f"Unsupported episode override: {key}")
+            if key == "terrain_seed":
+                self._forced_terrain_seed = int(value)
+            elif key == "force_terrain_regen":
+                self._force_terrain_regen = bool(value)
+            elif key == "angle_range":
+                if len(value) != 2:
+                    raise ValueError("angle_range override must contain exactly two values")
+                self._next_episode_params[key] = [float(value[0]), float(value[1])]
+            else:
+                self._next_episode_params[key] = value
+        diag_log(
+            "env_set_next_episode_params",
+            pending_params=self._next_episode_params,
+            forced_terrain_seed=self._forced_terrain_seed,
+            force_terrain_regen=self._force_terrain_regen,
+        )
+
+    def _apply_next_episode_params(self):
+        for key, value in self._next_episode_params.items():
+            if key == "goal_distance":
+                self.goal_distance = int(value)
+            elif key == "num_obstacles":
+                self.num_obstacles = int(value)
+            elif key == "num_dynamic_obstacles":
+                self.num_dynamic_obstacles = int(value)
+            elif key == "terrain_length":
+                self.terrain_length = int(value)
+            elif key == "angle_range":
+                self.angle_range = [float(value[0]), float(value[1])]
+            else:
+                setattr(self, key, value)
+        self._next_episode_params = {}
+
     def _wait_collision_clear(self, timeout=2.0):
         """Poll until collision info is cleared after reset (max timeout seconds)."""
         deadline = time.time() + timeout
@@ -161,7 +239,7 @@ class PCGVesselEnv(gym.Env):
         if arm_ok is False:
             raise RuntimeError("armDisarm(True) failed for the vessel.")
         self.vessel.getVesselState()
-        self.vessel.setVesselControls("", VesselControls([0, 0], [0.5, 0.5]))
+        self.vessel.setVesselControls("", VesselControls([0.0, 0.0], [0.5, 0.5]))
 
     def _restart_sim(self, max_retries=3):
         """Kill the simulator, restart it, reconnect, and re-activate PCG."""
@@ -213,21 +291,33 @@ class PCGVesselEnv(gym.Env):
 
     def _generate_terrain(self):
         """Generate new PCG terrain and fetch waypoints for each section up to goal_distance."""
-        if self.terrain_regen_interval == 0:
+        if self._forced_terrain_seed is not None:
+            seed = int(self._forced_terrain_seed)
+            self._forced_terrain_seed = None
+        elif self.terrain_regen_interval == 0:
             seed = -538846106
         else:
             seed = -464588337 + self.base_seed + self.episode_count
         print(f"Generating terrain with seed={seed}")
+        diag_log(
+            "env_generate_terrain_begin",
+            episode_count=self.episode_count,
+            terrain_seed=seed,
+            goal_distance=int(self.goal_distance),
+            terrain_length=int(self.terrain_length),
+            angle_range=list(self.angle_range),
+            use_c_side_pcg_obstacles=bool(self.use_c_side_pcg_obstacles),
+        )
 
         time.sleep(2.0)  # let sim settle before PCG generation
         terrain_ok = self.vessel.generatePortTerrain(
             "port",
             seed,
-            10,
-            -45.0,
-            45.0,
-            5000.0,
-            10000.0,
+            int(self.terrain_length),
+            float(self.angle_range[0]),
+            float(self.angle_range[1]),
+            float(self.terrain_min_width_cm),
+            float(self.terrain_max_width_cm),
             bool(self.use_c_side_pcg_obstacles),
         )
         print(f"generatePortTerrain returned: {terrain_ok}")
@@ -275,6 +365,13 @@ class PCGVesselEnv(gym.Env):
         self.goal_y = self.waypoints[-1][1]
         wp_str = "  ".join(f"WP{i+1}=({x:.1f}, {y:.1f})" for i, (x, y) in enumerate(self.waypoints))
         print(f"{wp_str}")
+        diag_log(
+            "env_generate_terrain_complete",
+            episode_count=self.episode_count,
+            waypoint_count=len(self.waypoints),
+            final_goal_x=float(self.goal_x),
+            final_goal_y=float(self.goal_y),
+        )
 
     def _spawn_obstacles(self):
         """Spawn random obstacles between vessel and goal."""
@@ -314,6 +411,14 @@ class PCGVesselEnv(gym.Env):
 
             pose = Pose(Vector3r(obs_x, obs_y, 250), Quaternionr())
             self.vessel.simAddObstacle(pose, 0, "buoy")
+            self.current_obstacles.append(
+                {
+                    "x": float(obs_x / 100.0),
+                    "y": float(obs_y / 100.0),
+                    "dynamic": False,
+                    "speed": 0.0,
+                }
+            )
 
         # Record only the names that appeared since the baseline.
         after = self._snapshot_obstacle_names()
@@ -365,8 +470,59 @@ class PCGVesselEnv(gym.Env):
                 remaining_names.append(name)
         self.spawned_obstacle_names = remaining_names
 
+    def _compute_cross_track_error(self, pos_x, pos_y):
+        curr_wp = self.waypoints[self.current_waypoint_idx]
+        start = np.array([self.prev_waypoint_x, self.prev_waypoint_y], dtype=np.float32)
+        end = np.array([curr_wp[0], curr_wp[1]], dtype=np.float32)
+        segment = end - start
+        segment_norm = np.linalg.norm(segment)
+        if segment_norm < 1e-6:
+            return 0.0
+        rel = np.array([pos_x, pos_y], dtype=np.float32) - start
+        cross = segment[0] * rel[1] - segment[1] * rel[0]
+        return float(cross / segment_norm)
+
+    def _build_reward_state(self, goal_reached=False):
+        dx = float(self.state["distance_to_goal_x"])
+        dy = float(self.state["distance_to_goal_y"])
+        return {
+            "distance_to_goal": float(math.sqrt(dx**2 + dy**2)),
+            "heading_error": float(self.state.get("heading_error", 0.0)),
+            "min_obstacle_distance": float(self.min_obstacle_distance),
+            "cross_track_error": float(self.cross_track_error),
+            "collision": bool(self.state["collision"]),
+            "goal_reached": bool(goal_reached),
+        }
+
+    def _retarget_current_waypoint(self):
+        pos_x = self.state["position"][0]
+        pos_y = self.state["position"][1]
+        curr_wp = self.waypoints[self.current_waypoint_idx]
+        dx_curr = curr_wp[0] - pos_x
+        dy_curr = curr_wp[1] - pos_y
+        self.state["distance_to_goal_x"] = dx_curr
+        self.state["distance_to_goal_y"] = dy_curr
+        self.prev_distance_to_goal_x = dx_curr
+        self.prev_distance_to_goal_y = dy_curr
+        goal_angle = np.arctan2(dy_curr, dx_curr)
+        heading = self.state.get("heading", 0.0)
+        self.state["heading_error"] = (heading - goal_angle + np.pi) % (2 * np.pi) - np.pi
+        self.cross_track_error = self._compute_cross_track_error(pos_x, pos_y)
+        self.state["cross_track_error"] = self.cross_track_error
+
     def _spawn_dynamic_obstacles(self):
         """Spawn moving obstacles using the simulator's built-in movement."""
+        # Temporarily disabled because moving obstacles currently destabilize RL
+        # training/evaluation behavior. Keep the config surface intact so we can
+        # re-enable this path later without rewriting the pipeline.
+        if self.num_dynamic_obstacles > 0:
+            print(
+                f"Dynamic obstacle spawning is temporarily disabled; "
+                f"requested={self.num_dynamic_obstacles}, forcing 0."
+            )
+            diag_log("env_dynamic_obstacles_disabled", requested=int(self.num_dynamic_obstacles))
+        return
+
         if self.use_c_side_pcg_obstacles:
             # Dynamic obstacles (speed>0 entries in the native catalog) are already
             # handled by SpawnAdvancedObstacles; skip the RPC duplicate.
@@ -396,6 +552,14 @@ class PCGVesselEnv(gym.Env):
             speed = float(self.rng.uniform(500, 1500))
             pose = Pose(Vector3r(obs_x, obs_y, 250), Quaternionr())
             self.vessel.simAddObstacle(pose, speed, "boat")
+            self.current_obstacles.append(
+                {
+                    "x": float(obs_x / 100.0),
+                    "y": float(obs_y / 100.0),
+                    "dynamic": True,
+                    "speed": speed,
+                }
+            )
 
         after = self._snapshot_obstacle_names()
         for name in after - baseline:
@@ -404,6 +568,11 @@ class PCGVesselEnv(gym.Env):
 
     def _get_obs(self):
         """Get vessel state and LiDAR observations."""
+        if not self.waypoints or self.current_waypoint_idx >= len(self.waypoints):
+            raise RuntimeError(
+                "No active waypoint is available. Terrain generation likely did not produce valid goals."
+            )
+
         vessel_state = self.vessel.getVesselState()
         self.state["vessel_state"] = vessel_state
 
@@ -444,6 +613,12 @@ class PCGVesselEnv(gym.Env):
         for idx, sector in enumerate(lidar_sectors):
             valid = sector[sector > 0]
             lidar_pooled[idx] = float(np.min(valid)) if valid.size > 0 else 0.0
+        if self.lidar_noise_sigma > 0.0:
+            lidar_pooled = np.clip(
+                lidar_pooled + self.rng.normal(0.0, self.lidar_noise_sigma, size=lidar_pooled.shape),
+                a_min=0.0,
+                a_max=None,
+            ).astype(np.float32)
 
         # Heading from quaternion
         z = vessel_state.kinematics_estimated.orientation.z_val
@@ -481,6 +656,13 @@ class PCGVesselEnv(gym.Env):
         # Heading error to current waypoint, normalized to [-pi, pi]
         goal_angle = np.arctan2(dy_curr, dx_curr)
         heading_error = (heading - goal_angle + np.pi) % (2 * np.pi) - np.pi
+        self.state["heading_error"] = heading_error
+
+        observed_heading = heading
+        observed_heading_error = heading_error
+        if self.heading_noise_sigma > 0.0:
+            observed_heading = (heading + self.rng.normal(0.0, self.heading_noise_sigma) + np.pi) % (2 * np.pi) - np.pi
+            observed_heading_error = (observed_heading - goal_angle + np.pi) % (2 * np.pi) - np.pi
 
         # Velocities and accelerations
         linear_velocity_x = vessel_state.kinematics_estimated.linear_velocity.x_val
@@ -488,6 +670,8 @@ class PCGVesselEnv(gym.Env):
         linear_acceleration_x = vessel_state.kinematics_estimated.linear_acceleration.x_val
         linear_acceleration_y = vessel_state.kinematics_estimated.linear_acceleration.y_val
         angular_acceleration_z = vessel_state.kinematics_estimated.angular_acceleration.z_val
+        self.cross_track_error = self._compute_cross_track_error(pos_x, pos_y)
+        self.state["cross_track_error"] = self.cross_track_error
 
         obs = np.concatenate([
             np.array([
@@ -496,8 +680,8 @@ class PCGVesselEnv(gym.Env):
                 distance_to_curr,
                 dx_next, dy_next,
                 distance_to_next,
-                heading_error,
-                np.sin(heading), np.cos(heading),
+                observed_heading_error,
+                np.sin(observed_heading), np.cos(observed_heading),
                 linear_velocity_x, linear_velocity_y,
                 linear_acceleration_x, linear_acceleration_y,
                 angular_acceleration_z,
@@ -523,72 +707,81 @@ class PCGVesselEnv(gym.Env):
         self.frame_buffer.append(obs)
         return np.concatenate(list(self.frame_buffer))
 
+    def _clip_action(self, action):
+        action = np.asarray(action, dtype=np.float32)
+        thrust = float(np.clip(action[0], self.action_space.low[0], self.action_space.high[0]))
+        yaw_cmd = float(np.clip(action[1], self.action_space.low[1], self.action_space.high[1]))
+        return np.array([thrust, yaw_cmd], dtype=np.float32)
+
     def _do_action(self, action):
         thrust = float(action[0])
-        angle = float(action[1])
-        vessel_controls = VesselControls([0, thrust], [0, angle])
+        yaw_cmd = float(action[1])
+        angle_delta = 0.5 * yaw_cmd * self.yaw_angle_scale
+        angle_stern = float(np.clip(0.5 - angle_delta, 0.0, 1.0))
+        angle_bow = float(np.clip(0.5 + angle_delta, 0.0, 1.0))
+        vessel_controls = VesselControls([thrust, thrust], [angle_stern, angle_bow])
+        diag_log(
+            "env_action_applied",
+            episode_count=self.episode_count,
+            timestep=self.timestep,
+            thrust=thrust,
+            yaw_cmd=yaw_cmd,
+            angle_stern=angle_stern,
+            angle_bow=angle_bow,
+            action_repeat=int(self.action_repeat),
+        )
         for _ in range(self.action_repeat):
             self.vessel.setVesselControls("", vessel_controls)
             time.sleep(self.step_sleep)
-        self.prev_actions = action.copy()
+        self.prev_actions = np.asarray(action, dtype=np.float32).copy()
 
-    def _compute_reward(self):
-        dx = self.state["distance_to_goal_x"]
-        dy = self.state["distance_to_goal_y"]
-        distance = math.sqrt(dx**2 + dy**2)
-        prev_distance = math.sqrt(
-            self._reward_prev_dist_x**2 + self._reward_prev_dist_y**2
-        )
-        progress = prev_distance - distance  # positive = getting closer
-
-        # Progress reward + time penalty (net negative unless making good progress)
-        reward = 1.0 * progress - 0.1
-
-        # Terminal conditions
+    def _compute_reward(self, action, prev_action):
+        current_state = self._build_reward_state(goal_reached=False)
+        distance = current_state["distance_to_goal"]
         terminated = False
         truncated = False
         if self.state["collision"]:
             terminated = True
             self.state["success"] = False
-            reward = -100.0
-        elif distance < 10:
+            current_state["collision"] = True
+        elif distance < self.waypoint_radius:
             is_final = self.current_waypoint_idx == len(self.waypoints) - 1
             if is_final:
                 terminated = True
                 self.state["success"] = True
-                reward = 500.0
+                current_state["goal_reached"] = True
             else:
                 # Intermediate waypoint reached; advance to the next waypoint.
                 reached = self.waypoints[self.current_waypoint_idx]
                 self.prev_waypoint_x = reached[0]
                 self.prev_waypoint_y = reached[1]
                 self.current_waypoint_idx += 1
-                next_wp = self.waypoints[self.current_waypoint_idx]
-                pos_x = self.state["position"][0]
-                pos_y = self.state["position"][1]
-                # Reset distance tracking so next step's progress is toward new waypoint
-                self.prev_distance_to_goal_x = next_wp[0] - pos_x
-                self.prev_distance_to_goal_y = next_wp[1] - pos_y
-                self.state["distance_to_goal_x"] = next_wp[0] - pos_x
-                self.state["distance_to_goal_y"] = next_wp[1] - pos_y
+                self._retarget_current_waypoint()
         elif self.timestep >= self.max_timesteps:
             truncated = True
             self.state["success"] = False
 
-        return reward, terminated, truncated
+        reward, components = self.reward_computer.compute(current_state, self.prev_reward_state or current_state, action, prev_action)
+        if terminated or truncated:
+            self.prev_reward_state = current_state
+        else:
+            self.prev_reward_state = self._build_reward_state(goal_reached=False)
+        return reward, components, terminated, truncated
 
     def step(self, action):
         try:
             return self._step_inner(action)
         except Exception as e:
             print(f"SIM ERROR in step(): {e}")
+            diag_log("env_step_exception", episode_count=self.episode_count, timestep=self.timestep, error=str(e))
             if self.sim_launch_mode == "exe":
                 self._restart_sim()
                 obs = np.zeros(self.single_obs_size * self.n_stack, dtype=np.float32)
                 info = {
                     "reward": 0.0,
+                    "reward_components": {},
                     "thrust": 0.0,
-                    "rudder_angle": 0.5,
+                    "yaw_cmd": 0.0,
                     "distance_to_goal_x": 0.0,
                     "distance_to_goal_y": 0.0,
                     "success": 0,
@@ -596,6 +789,7 @@ class PCGVesselEnv(gym.Env):
                     "episode_num": self.episode_count,
                     "end_reason": "sim_crash",
                     "waypoints_reached": 0,
+                    "path_length_ratio": 0.0,
                 }
                 return obs, 0.0, False, True, info
             raise RuntimeError(
@@ -605,12 +799,14 @@ class PCGVesselEnv(gym.Env):
 
     def _step_inner(self, action):
         self.timestep += 1
+        action = self._clip_action(action)
+        prev_action = self.prev_actions.copy()
         self._do_action(action)
-        # Save previous distance BEFORE _get_obs overwrites it
-        self._reward_prev_dist_x = self.prev_distance_to_goal_x
-        self._reward_prev_dist_y = self.prev_distance_to_goal_y
         obs = self._get_stacked_obs()
-        reward, terminated, truncated = self._compute_reward()
+        step_path = np.linalg.norm(self.state["position"][:2] - self.state["prev_position"][:2])
+        self.episode_path_length += float(step_path)
+        self.episode_trajectory.append(self.state["position"][:2].copy())
+        reward, components, terminated, truncated = self._compute_reward(action, prev_action)
 
         end_reason = None
         if terminated:
@@ -624,6 +820,7 @@ class PCGVesselEnv(gym.Env):
         pos_y = self.state["position"][1]
         final_dist_x = final_wp[0] - pos_x
         final_dist_y = final_wp[1] - pos_y
+        path_length_ratio = self.episode_path_length / max(self.initial_final_goal_distance, 1e-6)
 
         # How many waypoints were fully reached this episode
         waypoints_reached = (
@@ -633,17 +830,32 @@ class PCGVesselEnv(gym.Env):
 
         if end_reason is not None:
             try:
-                self.vessel.setVesselControls("", VesselControls([0, 0], [0.5, 0.5]))
-                self.vessel.reset()
+                # Preserve the terminal vessel state until the next env.reset().
+                # Episode teardown should not hard-reset the simulator inside step().
+                self.vessel.setVesselControls("", VesselControls([0.0, 0.0], [0.5, 0.5]))
             except Exception:
                 pass  # will be handled by next reset()
             final_dist = np.sqrt(final_dist_x**2 + final_dist_y**2)
             print(f"[Episode {self.episode_count}] End: {end_reason} | wps={waypoints_reached}/{len(self.waypoints)} | reward={reward:.1f} | steps={self.timestep} | final_dist={final_dist:.1f} | initial_dist={self.initial_goal_distance:.1f}")
+            diag_log(
+                "env_episode_end",
+                episode_count=self.episode_count,
+                end_reason=end_reason,
+                timestep=self.timestep,
+                reward=float(reward),
+                final_dist=float(final_dist),
+                waypoints_reached=int(waypoints_reached),
+                waypoint_count=len(self.waypoints),
+                path_length_ratio=float(path_length_ratio),
+                actual_path_length=float(self.episode_path_length),
+                straight_line_distance=float(self.initial_final_goal_distance),
+            )
 
         info = {
             "reward": reward,
+            "reward_components": components,
             "thrust": action[0],
-            "rudder_angle": action[1],
+            "yaw_cmd": action[1],
             "distance_to_goal_x": abs(final_dist_x),
             "distance_to_goal_y": abs(final_dist_y),
             "success": int(self.state["success"]),
@@ -651,7 +863,14 @@ class PCGVesselEnv(gym.Env):
             "episode_num": self.episode_count,
             "end_reason": end_reason,
             "waypoints_reached": waypoints_reached,
+            "path_length_ratio": float(path_length_ratio),
+            "actual_path_length": float(self.episode_path_length),
+            "straight_line_distance": float(self.initial_final_goal_distance),
         }
+        if end_reason is not None:
+            info["episode_trajectory"] = [point.tolist() for point in self.episode_trajectory]
+            info["waypoints"] = [list(point) for point in self.waypoints]
+            info["obstacles"] = list(self.current_obstacles)
 
         return obs, reward, terminated, truncated, info
 
@@ -660,6 +879,7 @@ class PCGVesselEnv(gym.Env):
             return self._reset_inner(seed=seed, options=options)
         except Exception as e:
             print(f"SIM ERROR in reset(): {e}")
+            diag_log("env_reset_exception", episode_count=self.episode_count, error=str(e))
             if self.sim_launch_mode == "exe":
                 self._restart_sim()
                 return self._reset_inner(seed=seed, options=options)
@@ -670,17 +890,39 @@ class PCGVesselEnv(gym.Env):
 
     def _reset_inner(self, seed=None, options=None):
         super().reset(seed=seed)
+        requested_seed = seed
+        if seed is not None:
+            self.rng = np.random.RandomState(seed)
         self.timestep = 0
         self.episode_count += 1
+        self._apply_next_episode_params()
 
         # Regenerate terrain: every N episodes, only on first episode if interval <= 0,
         # or forced after sim restart
-        regen = getattr(self, '_needs_terrain_regen', False) or (
-            self.episode_count == 1
-            if self.terrain_regen_interval <= 0
-            else self.episode_count % self.terrain_regen_interval == 1
+        regen = (
+            self._force_terrain_regen
+            or getattr(self, '_needs_terrain_regen', False)
+            or not self.waypoints
+            or (
+                self.episode_count == 1
+                if self.terrain_regen_interval <= 0
+                else (self.episode_count - 1) % self.terrain_regen_interval == 0
+            )
         )
         self._needs_terrain_regen = False
+        self._force_terrain_regen = False
+        diag_log(
+            "env_reset_begin",
+            episode_count=self.episode_count,
+            requested_seed=requested_seed,
+            regen=bool(regen),
+            terrain_regen_interval=int(self.terrain_regen_interval),
+            current_num_obstacles=int(self.num_obstacles),
+            current_num_dynamic_obstacles=int(self.num_dynamic_obstacles),
+            current_goal_distance=int(self.goal_distance),
+            current_terrain_length=int(self.terrain_length),
+            current_angle_range=list(self.angle_range),
+        )
 
         self.vessel.reset()
         self._wait_collision_clear()
@@ -691,10 +933,11 @@ class PCGVesselEnv(gym.Env):
             print(f"[Episode {self.episode_count}] Regenerated terrain")
 
         # Neutral controls
-        self.vessel.setVesselControls("", VesselControls([0, 0], [0.5, 0.5]))
+        self.vessel.setVesselControls("", VesselControls([0.0, 0.0], [0.5, 0.5]))
 
         # Clean up any leftover obstacles, then spawn fresh ones
         self._destroy_obstacles()
+        self.current_obstacles = []
         self._spawn_obstacles()
         self._spawn_dynamic_obstacles()
 
@@ -703,19 +946,22 @@ class PCGVesselEnv(gym.Env):
 
         # Reset waypoint navigation state
         self.current_waypoint_idx = 0
-        self.prev_waypoint_x = 0.0
-        self.prev_waypoint_y = 0.0
+        start_state = self.vessel.getVesselState()
+        self.prev_waypoint_x = start_state.kinematics_estimated.position.x_val
+        self.prev_waypoint_y = start_state.kinematics_estimated.position.y_val
 
         # Reset tracking state
-        self.prev_actions = np.zeros(2)
+        self.prev_actions = np.zeros(2, dtype=np.float32)
         self.prev_distance_to_goal_x = 0.0
         self.prev_distance_to_goal_y = 0.0
         self.state["success"] = False
         self.state["collision"] = False
+        self.episode_path_length = 0.0
 
         # Fill frame buffer with initial observation
         self.frame_buffer.clear()
         obs = self._get_obs()
+        self.state["prev_position"] = self.state["position"].copy()
         self.initial_goal_distance = np.sqrt(
             self.state["distance_to_goal_x"]**2 +
             self.state["distance_to_goal_y"]**2
@@ -726,9 +972,22 @@ class PCGVesselEnv(gym.Env):
         pos_x = self.state["position"][0]
         pos_y = self.state["position"][1]
         dist_to_final = np.sqrt((final_wp[0] - pos_x)**2 + (final_wp[1] - pos_y)**2)
+        self.initial_final_goal_distance = dist_to_final
         self._next_distance_milestone = (int(dist_to_final) // 20) * 20
+        self.prev_reward_state = self._build_reward_state(goal_reached=False)
+        self.episode_trajectory = [self.state["position"][:2].copy()]
         for _ in range(self.n_stack):
             self.frame_buffer.append(obs)
+        diag_log(
+            "env_reset_complete",
+            episode_count=self.episode_count,
+            requested_seed=requested_seed,
+            regen=bool(regen),
+            waypoint_count=len(self.waypoints),
+            initial_goal_distance=float(self.initial_goal_distance),
+            initial_final_goal_distance=float(self.initial_final_goal_distance),
+            obstacle_count=len(self.current_obstacles),
+        )
         return np.concatenate(list(self.frame_buffer)), {}
 
     def close(self):

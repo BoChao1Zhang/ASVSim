@@ -9,6 +9,7 @@
 #include "Engine/Engine.h"
 #include "Misc/OutputDeviceNull.h"
 #include "ImageUtils.h"
+#include "Async/Future.h"
 #include <cstdlib>
 #include <ctime>
 #include <algorithm>
@@ -323,12 +324,51 @@ bool WorldSimApi::activateGeneration(bool landscape)
 
 bool WorldSimApi::generatePortTerrain(const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd, bool spawn_native_obstacles)
 {
-	bool result;
-	UAirBlueprintLib::RunCommandOnGameThread([&]() {
-		result = simmode_->generatePortTerrain(type, seed, length, mina, maxa, mind, maxd, spawn_native_obstacles);
-		},
-		true);
-	return result;
+    if (simmode_ == nullptr) {
+        UE_LOG(LogTemp, Warning, TEXT("WorldSimApi::generatePortTerrain failed: SimModeBase is null."));
+        return false;
+    }
+
+    if (UAirBlueprintLib::IsInGameThread()) {
+        UE_LOG(LogTemp, Warning, TEXT("WorldSimApi::generatePortTerrain called on the game thread; falling back to synchronous execution."));
+        return simmode_->generatePortTerrain(type, seed, length, mina, maxa, mind, maxd, spawn_native_obstacles);
+    }
+
+    TSharedRef<TPromise<bool>, ESPMode::ThreadSafe> Promise = MakeShared<TPromise<bool>, ESPMode::ThreadSafe>();
+    TFuture<bool> Future = Promise->GetFuture();
+    TWeakObjectPtr<ASimModeBase> WeakSimMode(simmode_);
+
+    UAirBlueprintLib::RunCommandOnGameThread(
+        [WeakSimMode, Type = type, seed, length, mina, maxa, mind, maxd, bSpawnNativeObstacles = spawn_native_obstacles, Promise]() mutable
+        {
+            if (!WeakSimMode.IsValid()) {
+                Promise->SetValue(false);
+                return;
+            }
+
+            WeakSimMode->generatePortTerrainDeferred(
+                Type,
+                seed,
+                length,
+                mina,
+                maxa,
+                mind,
+                maxd,
+                bSpawnNativeObstacles,
+                [Promise](bool bResult) mutable
+                {
+                    Promise->SetValue(bResult);
+                });
+        },
+        false);
+
+    constexpr double TerrainGenerationTimeoutSeconds = 60.0;
+    if (!Future.WaitFor(FTimespan::FromSeconds(TerrainGenerationTimeoutSeconds))) {
+        UE_LOG(LogTemp, Error, TEXT("WorldSimApi::generatePortTerrain timed out after %.1f seconds."), TerrainGenerationTimeoutSeconds);
+        return false;
+    }
+
+    return Future.Get();
 }
 
 std::vector<WorldSimApi::Vector2r> WorldSimApi::getGoal(int distance, const WorldSimApi::Vector2r& initial_location) const

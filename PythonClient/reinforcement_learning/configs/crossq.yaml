@@ -1,0 +1,21 @@
+extends: base.yaml
+
+algo:
+  name: crossq
+  learning_rate: 0.0003
+  gamma: 0.99
+  batch_size: 256
+  buffer_size: 500000
+  learning_starts: 5000
+  train_freq: 1
+  stats_window_size: 10
+  net_arch: [512, 512]
+  device: cpu
+
+train:
+  total_timesteps: 2500000
+  checkpoint_freq: 25000
+  eval_freq: 50000
+
+curriculum:
+  enabled: false

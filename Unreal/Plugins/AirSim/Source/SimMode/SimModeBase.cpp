@@ -2319,7 +2319,66 @@ bool ASimModeBase::activateGeneration(bool landscape)
     return true;
 }
 
+void ASimModeBase::generatePortTerrainDeferred(const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd, bool spawn_native_obstacles, TFunction<void(bool)>&& Completion)
+{
+    TSharedRef<TFunction<void(bool)>, ESPMode::ThreadSafe> CompletionPtr = MakeShared<TFunction<void(bool)>, ESPMode::ThreadSafe>(MoveTemp(Completion));
+
+    if (!IsInGameThread()) {
+        UAirBlueprintLib::RunCommandOnGameThread(
+            [this, Type = type, seed, length, mina, maxa, mind, maxd, bSpawnNativeObstacles = spawn_native_obstacles, CompletionPtr]() mutable
+            {
+                generatePortTerrainDeferred(
+                    Type,
+                    seed,
+                    length,
+                    mina,
+                    maxa,
+                    mind,
+                    maxd,
+                    bSpawnNativeObstacles,
+                    [CompletionPtr](bool bResult)
+                    {
+                        (*CompletionPtr)(bResult);
+                    });
+            },
+            false);
+        return;
+    }
+
+    UWorld* World = GetWorld();
+    if (!World) {
+        UE_LOG(LogTemp, Warning, TEXT("generatePortTerrain deferred transaction skipped: world is null."));
+        (*CompletionPtr)(false);
+        return;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("generatePortTerrain deferred transaction scheduled for next tick. native_owner=%s"),
+        spawn_native_obstacles ? TEXT("unreal") : TEXT("python"));
+
+    TWeakObjectPtr<ASimModeBase> WeakThis(this);
+    World->GetTimerManager().SetTimerForNextTick(
+        FTimerDelegate::CreateWeakLambda(
+            this,
+            [WeakThis, Type = type, seed, length, mina, maxa, mind, maxd, bSpawnNativeObstacles = spawn_native_obstacles, CompletionPtr]() mutable
+            {
+                bool bResult = false;
+                if (WeakThis.IsValid()) {
+                    bResult = WeakThis->generatePortTerrainImmediate(Type, seed, length, mina, maxa, mind, maxd, bSpawnNativeObstacles);
+                }
+                else {
+                    UE_LOG(LogTemp, Warning, TEXT("generatePortTerrain deferred transaction skipped: SimModeBase is no longer valid."));
+                }
+
+                (*CompletionPtr)(bResult);
+            }));
+}
+
 bool ASimModeBase::generatePortTerrain(const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd, bool spawn_native_obstacles)
+{
+    return generatePortTerrainImmediate(type, seed, length, mina, maxa, mind, maxd, spawn_native_obstacles);
+}
+
+bool ASimModeBase::generatePortTerrainImmediate(const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd, bool spawn_native_obstacles)
 {
 	//get generation manager actor
     AActor* GenerationManager = FindGenerationManagerActor(GetWorld());

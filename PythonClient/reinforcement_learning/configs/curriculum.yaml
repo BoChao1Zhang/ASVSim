@@ -1,0 +1,33 @@
+stages:
+  - name: easy
+    num_obstacles: 2
+    num_dynamic_obstacles: 0
+    num_waypoints: 1
+    length: 6
+    angle_range: [-20.0, 20.0]
+  - name: medium
+    num_obstacles: 5
+    num_dynamic_obstacles: 0
+    num_waypoints: 2
+    length: 10
+    angle_range: [-45.0, 45.0]
+  - name: hard
+    num_obstacles: 8
+    num_dynamic_obstacles: 0
+    num_waypoints: 3
+    length: 12
+    angle_range: [-60.0, 60.0]
+  - name: advanced
+    num_obstacles: 10
+    num_dynamic_obstacles: 0
+    num_waypoints: 3
+    length: 13
+    angle_range: [-68.0, 68.0]
+  - name: expert
+    num_obstacles: 12
+    num_dynamic_obstacles: 0
+    num_waypoints: 4
+    length: 15
+    angle_range: [-75.0, 75.0]
+promote_threshold: 0.8
+promote_window: 50

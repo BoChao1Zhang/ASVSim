@@ -3,7 +3,7 @@
 ## Introduction
 
 The vessel reinforcement learning example in this repository is implemented under `PythonClient/reinforcement_learning/`.
-It trains a local navigation policy for procedurally generated port channels: the policy receives vessel state, waypoint geometry, and LiDAR obstacle cues, then outputs continuous thrust and rudder commands.
+It trains a local navigation policy for procedurally generated port channels: the policy receives vessel state, waypoint geometry, and LiDAR obstacle cues, then outputs continuous thrust and yaw commands.
 
 The current training stack is:
 
@@ -12,6 +12,16 @@ The current training stack is:
 - `PythonClient/reinforcement_learning/eval_vessel.py`
 
 This repository no longer uses the older `PythonClient/Vessel/Shipsim_gym.py` + SAC example described in legacy documentation.
+
+## Known Issues
+
+The current RL stack has two active issue threads that should be read together with this document:
+
+- `docs/vessel/issues/issue_01_pcg_runtime_cleanup.md`
+- `docs/vessel/issues/issue_02_rl_pipeline_semantics.md`
+
+The first issue is about Unreal runtime scene cleanup and obstacle ownership.
+The second issue is about Python-side training, evaluation, and curriculum semantics.
 
 ## Environment Overview (`PCGVesselEnv`)
 
@@ -39,8 +49,8 @@ This means the RL policy is solving a local planning and control problem on top 
 
 | Specification | Details |
 | --- | --- |
-| **Action Space** | `Box(2,)` - `[thrust, rudder_angle]` |
-| **Action Range** | `thrust: [0.0, 0.7]`, `rudder_angle: [0.48, 0.52]` |
+| **Action Space** | `Box(2,)` - `[thrust, yaw_cmd]` |
+| **Action Range** | `thrust: [0.0, 1.0]`, `yaw_cmd: [-1.0, 1.0]` |
 | **Observation Space** | `Box(54,)` - waypoint geometry + vessel state + LiDAR |
 | **Episode Length** | `800 / action_repeat` timesteps |
 | **Success Condition** | Reach within 10 meters of the final waypoint |
@@ -68,7 +78,7 @@ obs = [
     linear_acceleration_y,
     angular_acceleration_z,
     prev_thrust,
-    prev_rudder_angle,
+    prev_yaw_cmd,
     lidar_sector_0,
     ...,
     lidar_sector_35,
@@ -101,6 +111,9 @@ Recommended for local development and debugging in this repository.
 cd E:\code\ASVSim\PythonClient\reinforcement_learning
 python crossq_vessel.py --launch-sim none --ip 127.0.0.1 --num-waypoints 1
 ```
+
+For routine RL work in `PortEnv`, rely on the project default map `GenerationTopDownTest`.
+Do not pass an explicit map override on the `UnrealEditor.exe` command line unless you are intentionally testing another world.
 
 When using `--launch-sim none`, the script does not start or kill the simulator.
 If the Editor runtime becomes invalid, the script raises a clear error instead of attempting to restart `Blocks.exe`.

@@ -175,9 +175,10 @@ public:
 
 	bool spawnObstacle(const msr::airlib::Pose& pose, float speed = 1000.0, const std::string& obstacle_name = "");
 
-	bool activateGeneration(bool landscape = false);
+    bool activateGeneration(bool landscape = false);
 
     bool generatePortTerrain(const std::string& type = "", int seed = -464588337, int length = 10, float mina = -45.0, float maxa = 45.0, float mind = 3000.0, float maxd = 6000.0, bool spawn_native_obstacles = true);
+    void generatePortTerrainDeferred(const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd, bool spawn_native_obstacles, TFunction<void(bool)>&& Completion);
 
     static bool HasValidGenerationPathDataNative(const AActor* GenerationManager, int32& OutRoadCount, int32& OutBoundaryCount);
 
@@ -333,6 +334,7 @@ private:
     TMap<FString, FObjectAnnotator> annotators_;
 
 private:
+    bool generatePortTerrainImmediate(const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd, bool spawn_native_obstacles);
     void InitializeInstanceSegmentation();
     void InitializeAnnotation();
     void AddAnnotatorCamera(FString name, FObjectAnnotator::AnnotatorType type, float max_view_distance = -1.0f);

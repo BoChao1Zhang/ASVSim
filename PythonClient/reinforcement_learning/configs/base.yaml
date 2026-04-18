@@ -1,0 +1,73 @@
+env:
+  ip_address: 127.0.0.1
+  terrain_regen_interval: 10
+  num_obstacles: 4
+  num_dynamic_obstacles: 0
+  num_waypoints: 1
+  terrain_length: 10
+  angle_range: [-45.0, 45.0]
+  terrain_min_width_cm: 5000.0
+  terrain_max_width_cm: 10000.0
+  max_timesteps: 800
+  step_sleep: 0.25
+  action_repeat: 1
+  sim_path: Blocks/Blocks.exe
+  sim_wait: 10
+  launch_sim: none
+  use_c_side_pcg_obstacles: false
+  n_stack: 1
+  lidar_noise_sigma: 0.0
+  heading_noise_sigma: 0.0
+  waypoint_radius: 10.0
+  yaw_angle_scale: 0.25
+
+reward:
+  progress: 1.0
+  heading_align: 0.3
+  obstacle_proximity: 0.5
+  action_rate: 0.05
+  cross_track: 0.2
+  step_penalty: 0.1
+  terminal: 1.0
+  terminal_collision: -100.0
+  terminal_goal: 500.0
+  obstacle_decay: 5.0
+
+algo:
+  name: crossq
+  policy: MlpPolicy
+  learning_rate: 0.0003
+  gamma: 0.99
+  batch_size: 256
+  buffer_size: 500000
+  learning_starts: 5000
+  train_freq: 1
+  stats_window_size: 10
+  net_arch: [512, 512]
+  device: cpu
+  norm_obs: true
+  norm_reward: true
+  clip_obs: 10.0
+
+train:
+  total_timesteps: 2500000
+  seed: 43
+  checkpoint_freq: 25000
+  eval_freq: 50000
+  subset_eval_seeds: 5
+  subset_eval_episodes: 5
+  full_eval_seeds: 20
+  full_eval_episodes: 20
+  deterministic_eval: true
+  wandb_enabled: false
+  wandb_project: vessel-rl
+  wandb_key: null
+  run_root: data/reinforcement_learning/runs
+  sim_log: false
+  torch_deterministic: true
+
+curriculum:
+  enabled: false
+  file: curriculum.yaml
+  promote_threshold: 0.8
+  promote_window: 50
