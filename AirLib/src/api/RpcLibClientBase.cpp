@@ -474,9 +474,9 @@ __pragma(warning(disable : 4239))
 			return pimpl_->client.call("activateGeneration", landscape).as<bool>();
 		}
 
-		bool RpcLibClientBase::generatePortTerrain(const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd)
+		bool RpcLibClientBase::generatePortTerrain(const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd, bool spawn_native_obstacles)
 		{
-			return pimpl_->client.call("generatePortTerrain", type, seed, length, mina, maxa, mind, maxd).as<bool>();
+			return pimpl_->client.call("generatePortTerrain", type, seed, length, mina, maxa, mind, maxd, spawn_native_obstacles).as<bool>();
 		}
         vector<msr::airlib::Vector2r> RpcLibClientBase::getGoal(int distance, const msr::airlib::Vector2r& initial_location) const
         {

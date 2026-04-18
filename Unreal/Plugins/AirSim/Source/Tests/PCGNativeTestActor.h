@@ -24,6 +24,12 @@ public:
     TArray<FTransform> right;
 
     UPROPERTY(EditAnywhere)
+    TArray<FTransform> aleft;
+
+    UPROPERTY(EditAnywhere)
+    TArray<FTransform> aright;
+
+    UPROPERTY(EditAnywhere)
     TArray<AActor*> Generated;
 
     UPROPERTY(EditAnywhere)

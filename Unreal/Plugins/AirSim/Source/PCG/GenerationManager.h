@@ -193,6 +193,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "LevelSetup")
 	int32 SpawnAdvancedObstacles();
 
+	// Reflection-based runtime cleanup: works on ANY actor that exposes the
+	// Generated/generated actor array used for native obstacle ownership.
+	// Returns the number of valid spawned actors destroyed.
+	static int32 CleanupGeneratedActorsNative(AActor* GenerationManagerActor, bool bResetPathData = true);
+
+	// Reflection-based accessor for the runtime-owned obstacle container.
+	static int32 GetGeneratedActorCountNative(const AActor* GenerationManagerActor);
+
 	// Reflection-based entry point: works on ANY actor that exposes the
 	// road/left/right/Generated/stream properties (including BP-only actors
 	// that do not derive from AGenerationManager).

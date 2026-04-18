@@ -6,6 +6,7 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "PCG/GenerationManager.h"
+#include "SimMode/SimModeBase.h"
 #include "Tests/PCGNativeTestActor.h"
 
 namespace
@@ -65,6 +66,8 @@ void BuildStraightChannel(APCGNativeTestActor* Actor, int32 NumPoints = 13, floa
     Actor->road.Reset();
     Actor->left.Reset();
     Actor->right.Reset();
+    Actor->aleft.Reset();
+    Actor->aright.Reset();
     Actor->Generated.Reset();
     Actor->stream.Initialize(12345);
 
@@ -95,6 +98,8 @@ void BuildCurvedChannel(
     Actor->road.Reset();
     Actor->left.Reset();
     Actor->right.Reset();
+    Actor->aleft.Reset();
+    Actor->aright.Reset();
     Actor->Generated.Reset();
     Actor->stream.Initialize(12345);
 
@@ -251,6 +256,124 @@ bool FPCGNativeRespectsSpawnToggleTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Generated array should stay empty when obstacle spawning is disabled"), Actor->Generated.Num(), 0);
 
     CleanupSpawnedActors(Actor);
+    Actor->Destroy();
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FPCGNativeCleanupGeneratedActorsTest,
+    "AirSim.PCG.Native.CleanupGeneratedActors",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPCGNativeCleanupGeneratedActorsTest::RunTest(const FString& Parameters)
+{
+    UWorld* World = GetAutomationWorld();
+    TestNotNull(TEXT("Automation world"), World);
+    if (!World)
+    {
+        return false;
+    }
+
+    APCGNativeTestActor* Actor = SpawnTestActor(World);
+    TestNotNull(TEXT("PCG test actor"), Actor);
+    if (!Actor)
+    {
+        return false;
+    }
+
+    BuildStraightChannel(Actor, 5);
+
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.ObjectFlags |= RF_Transient;
+    AActor* SpawnedA = World->SpawnActor<AActor>(FVector(100.0f, 0.0f, 0.0f), FRotator::ZeroRotator, SpawnParams);
+    AActor* SpawnedB = World->SpawnActor<AActor>(FVector(200.0f, 0.0f, 0.0f), FRotator::ZeroRotator, SpawnParams);
+    TestNotNull(TEXT("First generated actor"), SpawnedA);
+    TestNotNull(TEXT("Second generated actor"), SpawnedB);
+    if (!SpawnedA || !SpawnedB)
+    {
+        if (Actor)
+        {
+            Actor->Destroy();
+        }
+        return false;
+    }
+
+    Actor->Generated.Add(SpawnedA);
+    Actor->Generated.Add(SpawnedB);
+    Actor->Generated.Add(nullptr);
+
+    SpawnedA->SetActorEnableCollision(true);
+    SpawnedA->SetActorHiddenInGame(false);
+    SpawnedB->SetActorEnableCollision(true);
+    SpawnedB->SetActorHiddenInGame(false);
+    SpawnedB->Destroy();
+
+    TestEqual(TEXT("Generated actor count before cleanup should ignore null and pending-destroy entries"), AGenerationManager::GetGeneratedActorCountNative(Actor), 1);
+    TestTrue(TEXT("Road points should exist before cleanup"), Actor->road.Num() > 0);
+    TestTrue(TEXT("Left points should exist before cleanup"), Actor->left.Num() > 0);
+    TestTrue(TEXT("Right points should exist before cleanup"), Actor->right.Num() > 0);
+
+    const int32 Destroyed = AGenerationManager::CleanupGeneratedActorsNative(Actor);
+
+    TestEqual(TEXT("Cleanup should destroy only the remaining live generated actor"), Destroyed, 1);
+    TestEqual(TEXT("Generated actor count after cleanup"), AGenerationManager::GetGeneratedActorCountNative(Actor), 0);
+    TestEqual(TEXT("Generated array should be empty after cleanup"), Actor->Generated.Num(), 0);
+    TestEqual(TEXT("Road points should be reset by cleanup"), Actor->road.Num(), 0);
+    TestEqual(TEXT("Left points should be reset by cleanup"), Actor->left.Num(), 0);
+    TestEqual(TEXT("Right points should be reset by cleanup"), Actor->right.Num(), 0);
+    TestTrue(TEXT("First generated actor should be gone after cleanup"), !IsValid(SpawnedA) || SpawnedA->IsActorBeingDestroyed());
+    TestTrue(TEXT("Second generated actor should be gone after cleanup"), !IsValid(SpawnedB) || SpawnedB->IsActorBeingDestroyed());
+    TestTrue(TEXT("Cleanup should disable collision immediately for live generated actors"), !IsValid(SpawnedA) || !SpawnedA->GetActorEnableCollision());
+    TestTrue(TEXT("Cleanup should hide live generated actors immediately"), !IsValid(SpawnedA) || SpawnedA->IsHidden());
+
+    Actor->Destroy();
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FPCGNativeAliasBoundaryPathValidityTest,
+    "AirSim.PCG.Native.AliasBoundaryPathValidity",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPCGNativeAliasBoundaryPathValidityTest::RunTest(const FString& Parameters)
+{
+    UWorld* World = GetAutomationWorld();
+    TestNotNull(TEXT("Automation world"), World);
+    if (!World)
+    {
+        return false;
+    }
+
+    APCGNativeTestActor* Actor = SpawnTestActor(World);
+    TestNotNull(TEXT("PCG test actor"), Actor);
+    if (!Actor)
+    {
+        return false;
+    }
+
+    Actor->road.Reset();
+    Actor->left.Reset();
+    Actor->right.Reset();
+    Actor->aleft.Reset();
+    Actor->aright.Reset();
+
+    for (int32 Index = 0; Index < 4; ++Index)
+    {
+        const float X = static_cast<float>(Index) * 8000.0f;
+        const FRotator Rotation(0.0f, 0.0f, 0.0f);
+        Actor->road.Add(FTransform(Rotation, FVector(X, 0.0f, 0.0f)));
+        Actor->aleft.Add(FTransform(Rotation, FVector(X, -3500.0f, 0.0f)));
+        Actor->aright.Add(FTransform(Rotation, FVector(X, 3500.0f, 0.0f)));
+    }
+
+    int32 RoadCount = 0;
+    int32 BoundaryCount = 0;
+    const bool bHasValidPathData = ASimModeBase::HasValidGenerationPathDataNative(Actor, RoadCount, BoundaryCount);
+
+    TestTrue(TEXT("Path validity should accept aleft/aright when left/right are absent"), bHasValidPathData);
+    TestEqual(TEXT("Road count should come from road path"), RoadCount, 4);
+    TestEqual(TEXT("Boundary count should come from alias boundary paths"), BoundaryCount, 4);
+
     Actor->Destroy();
     return true;
 }

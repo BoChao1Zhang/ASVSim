@@ -321,11 +321,11 @@ bool WorldSimApi::activateGeneration(bool landscape)
 	return result;
 }
 
-bool WorldSimApi::generatePortTerrain(const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd)
+bool WorldSimApi::generatePortTerrain(const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd, bool spawn_native_obstacles)
 {
 	bool result;
 	UAirBlueprintLib::RunCommandOnGameThread([&]() {
-		result = simmode_->generatePortTerrain(type, seed, length, mina, maxa, mind, maxd);
+		result = simmode_->generatePortTerrain(type, seed, length, mina, maxa, mind, maxd, spawn_native_obstacles);
 		},
 		true);
 	return result;

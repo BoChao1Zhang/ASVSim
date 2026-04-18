@@ -116,6 +116,17 @@ const TArray<FTransform>* FindTransformArrayProperty(const UObject* Object, cons
     return nullptr;
 }
 
+const TArray<FTransform>* FindBoundaryTransformArrayProperty(const UObject* Object, const FName PrimaryName, const FName AliasName)
+{
+    if (const TArray<FTransform>* Primary = FindTransformArrayProperty(Object, PrimaryName)) {
+        if (Primary->Num() > 0) {
+            return Primary;
+        }
+    }
+
+    return FindTransformArrayProperty(Object, AliasName);
+}
+
 TArray<AActor*>* FindActorArrayProperty(UObject* Object, const FName PropertyName)
 {
     if (!Object) {
@@ -231,7 +242,7 @@ void SetRealProperty(UObject* Object, const FName PropertyName, const double Val
     }
 }
 
-bool HasValidGenerationPathData(const AActor* GenerationManager, int32& OutRoadCount, int32& OutBoundaryCount)
+bool HasValidGenerationPathDataInternal(const AActor* GenerationManager, int32& OutRoadCount, int32& OutBoundaryCount)
 {
     OutRoadCount = 0;
     OutBoundaryCount = 0;
@@ -241,8 +252,8 @@ bool HasValidGenerationPathData(const AActor* GenerationManager, int32& OutRoadC
     }
 
     const TArray<FTransform>* Road = FindTransformArrayProperty(GenerationManager, TEXT("road"));
-    const TArray<FTransform>* Left = FindTransformArrayProperty(GenerationManager, TEXT("left"));
-    const TArray<FTransform>* Right = FindTransformArrayProperty(GenerationManager, TEXT("right"));
+    const TArray<FTransform>* Left = FindBoundaryTransformArrayProperty(GenerationManager, TEXT("left"), TEXT("aleft"));
+    const TArray<FTransform>* Right = FindBoundaryTransformArrayProperty(GenerationManager, TEXT("right"), TEXT("aright"));
 
     OutRoadCount = Road ? Road->Num() : 0;
     const int32 LeftCount = Left ? Left->Num() : 0;
@@ -272,8 +283,8 @@ void SpawnRandomObstaclesForGenerationManager(AActor* GenerationManager)
     }
 
     const TArray<FTransform>* RoadPoints = FindTransformArrayProperty(GenerationManager, TEXT("road"));
-    const TArray<FTransform>* LeftPoints = FindTransformArrayProperty(GenerationManager, TEXT("left"));
-    const TArray<FTransform>* RightPoints = FindTransformArrayProperty(GenerationManager, TEXT("right"));
+    const TArray<FTransform>* LeftPoints = FindBoundaryTransformArrayProperty(GenerationManager, TEXT("left"), TEXT("aleft"));
+    const TArray<FTransform>* RightPoints = FindBoundaryTransformArrayProperty(GenerationManager, TEXT("right"), TEXT("aright"));
     TArray<AActor*>* GeneratedActors = FindActorArrayProperty(GenerationManager, TEXT("Generated"));
     if (!GeneratedActors) {
         GeneratedActors = FindActorArrayProperty(GenerationManager, TEXT("generated"));
@@ -411,6 +422,11 @@ void SpawnRandomObstaclesForGenerationManager(AActor* GenerationManager)
 } // namespace
 
 ASimModeBase* ASimModeBase::SIMMODE = nullptr;
+
+bool ASimModeBase::HasValidGenerationPathDataNative(const AActor* GenerationManager, int32& OutRoadCount, int32& OutBoundaryCount)
+{
+    return HasValidGenerationPathDataInternal(GenerationManager, OutRoadCount, OutBoundaryCount);
+}
 
 ASimModeBase* ASimModeBase::getSimMode()
 {
@@ -2303,7 +2319,7 @@ bool ASimModeBase::activateGeneration(bool landscape)
     return true;
 }
 
-bool ASimModeBase::generatePortTerrain(const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd)
+bool ASimModeBase::generatePortTerrain(const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd, bool spawn_native_obstacles)
 {
 	//get generation manager actor
     AActor* GenerationManager = FindGenerationManagerActor(GetWorld());
@@ -2312,6 +2328,14 @@ bool ASimModeBase::generatePortTerrain(const std::string& type, int seed, int le
         UE_LOG(LogTemp, Warning, TEXT("GenerationManager actor is null. Terrain generation aborted."));
         return false;
     }
+    const int32 GeneratedBeforeCleanup = AGenerationManager::GetGeneratedActorCountNative(GenerationManager);
+    const int32 DestroyedGenerated = AGenerationManager::CleanupGeneratedActorsNative(GenerationManager);
+    const int32 GeneratedAfterCleanup = AGenerationManager::GetGeneratedActorCountNative(GenerationManager);
+    UE_LOG(LogTemp, Warning, TEXT("generatePortTerrain cleanup: native_owner=%s generated_before=%d destroyed=%d generated_after=%d."),
+        spawn_native_obstacles ? TEXT("unreal") : TEXT("python"),
+        GeneratedBeforeCleanup,
+        DestroyedGenerated,
+        GeneratedAfterCleanup);
 	UFunction* Function = GenerationManager->FindFunction(FName("SetSeed"));
 	if (Function) {
         GenerationManager->ProcessEvent(Function, &seed);
@@ -2356,11 +2380,20 @@ bool ASimModeBase::generatePortTerrain(const std::string& type, int seed, int le
         GenerationManager->ProcessEvent(Regenerate, &Params);
         int32 RoadCount = 0;
         int32 BoundaryCount = 0;
-        const bool bHasValidPathData = HasValidGenerationPathData(GenerationManager, RoadCount, BoundaryCount);
-        UE_LOG(LogTemp, Warning, TEXT("Terrain Generated. road=%d boundary=%d"), RoadCount, BoundaryCount);
+        const bool bHasValidPathData = HasValidGenerationPathDataNative(GenerationManager, RoadCount, BoundaryCount);
+        const int32 GeneratedAfterTerrain = AGenerationManager::GetGeneratedActorCountNative(GenerationManager);
+        UE_LOG(LogTemp, Warning, TEXT("Terrain Generated. road=%d boundary=%d generated=%d native_owner=%s"),
+            RoadCount,
+            BoundaryCount,
+            GeneratedAfterTerrain,
+            spawn_native_obstacles ? TEXT("unreal") : TEXT("python"));
 
         if (!bHasValidPathData) {
             UE_LOG(LogTemp, Warning, TEXT("GenerationManager path data is incomplete after generateTerrain. Skipping obstacle placement."));
+        }
+        else if (!spawn_native_obstacles) {
+            UE_LOG(LogTemp, Warning, TEXT("generatePortTerrain skipped native obstacle spawning because caller selected Python obstacle ownership. generated_after_spawn=%d."),
+                GeneratedAfterTerrain);
         }
         else {
             // The BP generationManager.uasset inherits from AActor directly (not
@@ -2371,11 +2404,14 @@ bool ASimModeBase::generatePortTerrain(const std::string& type, int seed, int le
             UAirBlueprintLib::RunCommandOnGameThread([WeakGenerationManager]() {
                 if (WeakGenerationManager.IsValid()) {
                     const int32 Spawned = AGenerationManager::ApplyAdvancedPCGNative(WeakGenerationManager.Get());
-                    UE_LOG(LogTemp, Warning, TEXT("ApplyAdvancedPCGNative returned spawned=%d."), Spawned);
+                    const int32 GeneratedAfterSpawn = AGenerationManager::GetGeneratedActorCountNative(WeakGenerationManager.Get());
+                    UE_LOG(LogTemp, Warning, TEXT("ApplyAdvancedPCGNative returned spawned=%d generated_after_spawn=%d."), Spawned, GeneratedAfterSpawn);
                     if (Spawned < 0) {
                         // Negative means the advanced native path could not execute at all.
                         // A valid zero means "executed successfully, but placed nothing".
                         SpawnRandomObstaclesForGenerationManager(WeakGenerationManager.Get());
+                        const int32 GeneratedAfterFallback = AGenerationManager::GetGeneratedActorCountNative(WeakGenerationManager.Get());
+                        UE_LOG(LogTemp, Warning, TEXT("Fallback native obstacle spawn completed. generated_after_spawn=%d."), GeneratedAfterFallback);
                     }
                 }
             }, true);
@@ -2407,7 +2443,7 @@ std::vector<FVector2D> ASimModeBase::getGoal(int distance, FVector2D initial_loc
 
     int32 RoadCount = 0;
     int32 BoundaryCount = 0;
-    if (!HasValidGenerationPathData(GenerationManager, RoadCount, BoundaryCount))
+    if (!HasValidGenerationPathDataNative(GenerationManager, RoadCount, BoundaryCount))
     {
         UE_LOG(LogTemp, Warning, TEXT("GenerationManager path data is invalid before getGoal. road=%d boundary=%d"), RoadCount, BoundaryCount);
         return port_locations;

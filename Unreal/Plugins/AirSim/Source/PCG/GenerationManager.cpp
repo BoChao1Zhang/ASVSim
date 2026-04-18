@@ -51,6 +51,14 @@ TArray<AActor*>* FindActorArrayProperty(UObject* Object, const FName PropertyNam
 	return nullptr;
 }
 
+TArray<AActor*>* FindGeneratedActorArrayProperty(UObject* Object)
+{
+	if (TArray<AActor*>* GeneratedActors = FindActorArrayProperty(Object, TEXT("Generated"))) {
+		return GeneratedActors;
+	}
+	return FindActorArrayProperty(Object, TEXT("generated"));
+}
+
 FRandomStream* FindRandomStreamProperty(UObject* Object, const FName PropertyName)
 {
 	if (!Object) {
@@ -133,6 +141,23 @@ TArray<FPCGObstacleSpec>* FindObstacleSpecArrayProperty(UObject* Object, const F
 	}
 
 	return nullptr;
+}
+
+void ResetTransformArrayIfPresent(UObject* Object, const FName PropertyName)
+{
+	if (TArray<FTransform>* TransformArray = FindTransformArrayProperty(Object, PropertyName)) {
+		TransformArray->Reset();
+	}
+}
+
+void ResetRuntimePathArrays(UObject* Object)
+{
+	ResetTransformArrayIfPresent(Object, TEXT("road"));
+	ResetTransformArrayIfPresent(Object, TEXT("left"));
+	ResetTransformArrayIfPresent(Object, TEXT("right"));
+	ResetTransformArrayIfPresent(Object, TEXT("temp"));
+	ResetTransformArrayIfPresent(Object, TEXT("aleft"));
+	ResetTransformArrayIfPresent(Object, TEXT("aright"));
 }
 
 void SetBoolProperty(UObject* Object, const FName PropertyName, const bool bValue)
@@ -466,6 +491,54 @@ void AGenerationManager::InletGeneration(TArray<FTransform>& points)
 void AGenerationManager::Clear()
 {
 }
+
+int32 AGenerationManager::CleanupGeneratedActorsNative(AActor* GenerationManagerActor, bool bResetPathData)
+{
+	if (!GenerationManagerActor) {
+		return 0;
+	}
+
+	int32 DestroyedCount = 0;
+	if (TArray<AActor*>* GeneratedActors = FindGeneratedActorArrayProperty(GenerationManagerActor)) {
+		for (AActor*& SpawnedActor : *GeneratedActors) {
+			if (IsValid(SpawnedActor) && !SpawnedActor->IsActorBeingDestroyed()) {
+				SpawnedActor->SetActorEnableCollision(false);
+				SpawnedActor->SetActorHiddenInGame(true);
+				SpawnedActor->Destroy();
+				++DestroyedCount;
+			}
+			SpawnedActor = nullptr;
+		}
+		GeneratedActors->Reset();
+	}
+
+	if (bResetPathData) {
+		ResetRuntimePathArrays(GenerationManagerActor);
+	}
+
+	return DestroyedCount;
+}
+
+int32 AGenerationManager::GetGeneratedActorCountNative(const AActor* GenerationManagerActor)
+{
+	if (!GenerationManagerActor) {
+		return 0;
+	}
+
+	const TArray<AActor*>* GeneratedActors = FindGeneratedActorArrayProperty(const_cast<AActor*>(GenerationManagerActor));
+	if (!GeneratedActors) {
+		return 0;
+	}
+
+	int32 LiveCount = 0;
+	for (AActor* SpawnedActor : *GeneratedActors) {
+		if (IsValid(SpawnedActor) && !SpawnedActor->IsActorBeingDestroyed()) {
+			++LiveCount;
+		}
+	}
+	return LiveCount;
+}
+
 void AGenerationManager::SetSeed(int32 seed)
 {
 	CachedSeed = seed;

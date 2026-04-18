@@ -70,7 +70,7 @@ namespace airlib
 
 		virtual bool activateGeneration(bool landscape = false) = 0;
 
-		virtual bool generatePortTerrain(const std::string& type = "", int seed = -464588337, int length = 10, float mina = -45.0, float maxa = 45.0, float mind = 3000.0, float maxd = 6000.0) = 0;
+		virtual bool generatePortTerrain(const std::string& type = "", int seed = -464588337, int length = 10, float mina = -45.0, float maxa = 45.0, float mind = 3000.0, float maxd = 6000.0, bool spawn_native_obstacles = true) = 0;
 
         virtual std::vector<Vector2r> getGoal(int distance = 12, const Vector2r& initial_location = Vector2r(0, 0)) const = 0;
 

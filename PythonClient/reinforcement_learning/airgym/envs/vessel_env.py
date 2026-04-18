@@ -220,7 +220,16 @@ class PCGVesselEnv(gym.Env):
         print(f"Generating terrain with seed={seed}")
 
         time.sleep(2.0)  # let sim settle before PCG generation
-        terrain_ok = self.vessel.generatePortTerrain("port", seed, 10, -45.0, 45.0, 5000.0, 10000.0)
+        terrain_ok = self.vessel.generatePortTerrain(
+            "port",
+            seed,
+            10,
+            -45.0,
+            45.0,
+            5000.0,
+            10000.0,
+            bool(self.use_c_side_pcg_obstacles),
+        )
         print(f"generatePortTerrain returned: {terrain_ok}")
 
         # Poll until final waypoint (section goal_distance) is valid
@@ -344,12 +353,17 @@ class PCGVesselEnv(gym.Env):
         if self.use_c_side_pcg_obstacles:
             return
 
+        remaining_names = []
         for name in list(self.spawned_obstacle_names):
             try:
-                self.vessel.simDestroyObject(name)
+                destroyed = self.vessel.simDestroyObject(name)
+                if not destroyed:
+                    print(f"WARNING: simDestroyObject({name}) returned False; keeping obstacle tracked for retry.")
+                    remaining_names.append(name)
             except Exception as exc:
                 print(f"WARNING: simDestroyObject({name}) failed: {exc}")
-        self.spawned_obstacle_names = []
+                remaining_names.append(name)
+        self.spawned_obstacle_names = remaining_names
 
     def _spawn_dynamic_obstacles(self):
         """Spawn moving obstacles using the simulator's built-in movement."""

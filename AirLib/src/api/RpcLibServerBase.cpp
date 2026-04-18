@@ -251,8 +251,8 @@ namespace airlib
 		pimpl_->server.bind("activateGeneration", [&](bool landscape) -> bool {
 			return getWorldSimApi()->activateGeneration(landscape);
 			});
-		pimpl_->server.bind("generatePortTerrain", [&](const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd) -> bool {
-			return getWorldSimApi()->generatePortTerrain(type, seed, length, mina, maxa, mind, maxd);
+		pimpl_->server.bind("generatePortTerrain", [&](const std::string& type, int seed, int length, float mina, float maxa, float mind, float maxd, bool spawn_native_obstacles) -> bool {
+			return getWorldSimApi()->generatePortTerrain(type, seed, length, mina, maxa, mind, maxd, spawn_native_obstacles);
 			});
 		pimpl_->server.bind("getGoal", [&](int distance, const RpcLibAdaptorsBase::Vector2r& initial_location) -> std::vector<RpcLibAdaptorsBase::Vector2r> {
 			return RpcLibAdaptorsBase::Vector2r::from(getWorldSimApi()->getGoal(distance, initial_location.to()));

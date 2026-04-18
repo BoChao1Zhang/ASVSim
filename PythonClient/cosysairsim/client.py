@@ -2404,7 +2404,7 @@ class VesselClient(VehicleClient, object):
         """
         return self.client.call('activateGeneration',landscape)
     
-    def generatePortTerrain(self, type = "", seed = -464588337, length = 10, mina = -45.0, maxa = 45.0, mind = 3000.0, maxd = 6000.0):
+    def generatePortTerrain(self, type = "", seed = -464588337, length = 10, mina = -45.0, maxa = 45.0, mind = 3000.0, maxd = 6000.0, spawn_native_obstacles = True):
         """
         Generate port terrain at runtime
 
@@ -2416,11 +2416,12 @@ class VesselClient(VehicleClient, object):
             maxa (float): maximum angle between points in the generation (degrees)
             mind (float): mimimum distance between points in the generation (cm)
             maxd (float): mimimum distance between points in the generation (cm)
+            spawn_native_obstacles (bool): whether Unreal native PCG should own obstacle spawning for this generation
 
         Returns:
             bool: Whether the terrain was generated
         """
-        return self.client.call('generatePortTerrain', type, seed, length, mina, maxa, mind, maxd)
+        return self.client.call('generatePortTerrain', type, seed, length, mina, maxa, mind, maxd, spawn_native_obstacles)
     
     def getGoal(self, initial_location, distance = 12):
         """
