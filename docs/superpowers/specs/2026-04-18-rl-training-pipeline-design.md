@@ -440,6 +440,21 @@ Implementation is considered complete only if all of the following are verified:
 5. `best/` can be selected from the final `33%` checkpoint subset
 6. crash budget enforcement stops the run once cumulative `sim_crash_rate > 1%`
 
+### 14.1 Milestone Gate
+
+Beyond unit tests, every integrated feature milestone must satisfy this release gate before it is considered complete:
+
+1. the relevant unit-test slice passes
+2. a smoke test passes against the integrated runtime path
+3. the milestone result is captured in a dedicated commit
+4. Git LFS coverage and status are verified for changed binary assets, especially under `Unreal/Environments/PortEnv`
+
+Operational notes:
+
+- a milestone is not considered verified by unit tests alone
+- if a new PortEnv binary artifact type appears and is not already covered by existing LFS rules, `.gitattributes` must be updated before the commit is created
+- existing repository coverage already includes `*.uasset`, `*.umap`, `*.zip`, and `*.rar`, so PortEnv map and packaged artifacts should remain LFS-managed unless a new binary extension is introduced
+
 Recommended verification stages:
 
 - unit tests for checkpoint metadata and resume logic
