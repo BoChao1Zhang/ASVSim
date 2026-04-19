@@ -142,6 +142,20 @@ class CurriculumWrapperTests(unittest.TestCase):
         self.assertEqual(config.curriculum.stages[0].name, "child_relative_override_stage")
         self.assertEqual(config.curriculum.stages[0].num_obstacles, 5)
 
+    def test_relative_curriculum_file_override_does_not_fall_back_to_base_directory(self):
+        with TemporaryDirectory() as temp_dir:
+            child_dir = Path(temp_dir) / "child_configs"
+            child_dir.mkdir()
+            child_config = child_dir / "child.yaml"
+            relative_base = Path(os.path.relpath(DEFAULT_CONFIG.with_name("base.yaml"), child_dir))
+            child_config.write_text(f"extends: {relative_base.as_posix()}\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(FileNotFoundError, r"curriculum\.yaml"):
+                load_config(
+                    child_config,
+                    ["curriculum.file=curriculum.yaml"],
+                )
+
     def test_validate_config_rejects_enabled_curriculum_without_stages(self):
         config = load_config(DEFAULT_CONFIG)
         config.curriculum.stages = []

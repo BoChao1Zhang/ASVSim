@@ -213,6 +213,10 @@ def _resolve_curriculum_path(
         candidate = (config_path.resolve().parent / requested).resolve()
         if candidate.exists():
             return candidate
+        raise FileNotFoundError(
+            "curriculum.file override was not found relative to the leaf config: "
+            f"{candidate}"
+        )
 
     declaration_path = _find_curriculum_file_declaration(config_path)
     if declaration_path is None:
