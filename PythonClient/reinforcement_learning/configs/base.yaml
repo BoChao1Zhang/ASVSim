@@ -72,7 +72,7 @@ train:
   torch_deterministic: true
 
 curriculum:
-  enabled: false
+  enabled: true
   file: curriculum.yaml
   promote_threshold: 0.8
   promote_window: 50
