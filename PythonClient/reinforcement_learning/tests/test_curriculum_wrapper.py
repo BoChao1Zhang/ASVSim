@@ -8,7 +8,7 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from airgym.wrappers.curriculum import CurriculumWrapper
-from config import DEFAULT_CONFIG, load_config, validate_config
+from config import DEFAULT_CONFIG, OBSERVATION_SCHEMA_VERSION, load_config, validate_config
 
 
 class _FakeEnv(gym.Env):
@@ -91,11 +91,44 @@ class CurriculumWrapperTests(unittest.TestCase):
         self.assertEqual(config.curriculum.stages[0].name, "stage_0_warmup")
         self.assertNotEqual(config.curriculum.stages[0].name, "child_local_stage")
 
+    def test_curriculum_file_override_loads_custom_stage_file(self):
+        with TemporaryDirectory() as temp_dir:
+            custom_curriculum = Path(temp_dir) / "custom_curriculum.yaml"
+            custom_curriculum.write_text(
+                "stages:\n"
+                "  - name: custom_override_stage\n"
+                "    num_obstacles: 7\n"
+                "    num_dynamic_obstacles: 0\n"
+                "    num_waypoints: 2\n"
+                "    length: 9\n"
+                "    angle_range: [-15.0, 15.0]\n",
+                encoding="utf-8",
+            )
+
+            config = load_config(
+                DEFAULT_CONFIG,
+                [f"curriculum.file={custom_curriculum.as_posix()}"],
+            )
+
+        self.assertEqual(len(config.curriculum.stages), 1)
+        self.assertEqual(config.curriculum.stages[0].name, "custom_override_stage")
+        self.assertEqual(config.curriculum.stages[0].num_obstacles, 7)
+
     def test_validate_config_rejects_enabled_curriculum_without_stages(self):
         config = load_config(DEFAULT_CONFIG)
         config.curriculum.stages = []
 
         with self.assertRaisesRegex(ValueError, "curriculum.enabled.*zero stages|no stages|at least one stage"):
+            validate_config(config)
+
+    def test_validate_config_rejects_mismatched_observation_schema_version(self):
+        config = load_config(DEFAULT_CONFIG)
+        config.env.observation_schema_version = OBSERVATION_SCHEMA_VERSION - 1
+
+        with self.assertRaisesRegex(
+            ValueError,
+            rf"observation_schema_version={OBSERVATION_SCHEMA_VERSION - 1}.*expected {OBSERVATION_SCHEMA_VERSION}",
+        ):
             validate_config(config)
 
     def test_terminal_episode_preserves_stage_before_promotion(self):

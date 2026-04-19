@@ -241,10 +241,15 @@ def load_config(config_path: str | Path, overrides: Sequence[str] | None = None)
 
     yaml_cfg = _load_config_tree(config_file)
     merged = OmegaConf.merge(base, yaml_cfg)
+
+    normalized_overrides = [_normalize_override(item) for item in overrides] if overrides else []
+    curriculum_file_overrides = [item for item in normalized_overrides if item.startswith("curriculum.file=")]
+    if curriculum_file_overrides:
+        merged = OmegaConf.merge(merged, OmegaConf.from_dotlist(curriculum_file_overrides))
     merged = _merge_curriculum_file(merged, config_file)
 
-    if overrides:
-        override_cfg = OmegaConf.from_dotlist([_normalize_override(item) for item in overrides])
+    if normalized_overrides:
+        override_cfg = OmegaConf.from_dotlist(normalized_overrides)
         merged = OmegaConf.merge(merged, override_cfg)
 
     OmegaConf.resolve(merged)
@@ -252,6 +257,12 @@ def load_config(config_path: str | Path, overrides: Sequence[str] | None = None)
 
 
 def validate_config(config) -> None:
+    if int(config.env.observation_schema_version) != OBSERVATION_SCHEMA_VERSION:
+        raise ValueError(
+            "env.observation_schema_version="
+            f"{int(config.env.observation_schema_version)} is unsupported; "
+            f"expected {OBSERVATION_SCHEMA_VERSION}"
+        )
     if int(config.env.action_repeat) < 1:
         raise ValueError("env.action_repeat must be >= 1")
     if int(config.env.num_waypoints) < 1:

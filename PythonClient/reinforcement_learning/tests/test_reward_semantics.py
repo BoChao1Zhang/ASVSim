@@ -111,6 +111,7 @@ class RewardSemanticsTests(unittest.TestCase):
             cross_track_error=-0.3,
             step_sleep=0.2,
             action_repeat=3,
+            timestep=4,
             episode_start_time=100.0,
         )
 
@@ -122,9 +123,34 @@ class RewardSemanticsTests(unittest.TestCase):
         self.assertAlmostEqual(reward_state["v_surge"], 0.8)
         self.assertAlmostEqual(reward_state["v_los"], 1.5)
         self.assertAlmostEqual(reward_state["speed"], 0.4)
-        self.assertAlmostEqual(reward_state["elapsed_time"], 7.5)
+        self.assertAlmostEqual(reward_state["elapsed_time"], 2.4)
         self.assertTrue(reward_state["goal_reached"])
         self.assertFalse(reward_state["collision"])
+
+    def test_build_reward_state_elapsed_time_tracks_env_progress_not_wall_clock(self):
+        stub_env = SimpleNamespace(
+            state={
+                "distance_to_goal_x": 0.0,
+                "distance_to_goal_y": 0.0,
+                "heading_error": 0.0,
+                "collision": False,
+                "v_surge": 0.0,
+                "v_los": 0.0,
+                "speed": 0.0,
+            },
+            min_obstacle_distance=999.0,
+            cross_track_error=0.0,
+            step_sleep=0.25,
+            action_repeat=2,
+            timestep=3,
+            episode_start_time=10.0,
+        )
+
+        with mock.patch("airgym.envs.vessel_env.time.time", return_value=9999.0):
+            reward_state = PCGVesselEnv._build_reward_state(stub_env, goal_reached=False)
+
+        self.assertAlmostEqual(reward_state["dt"], 0.5)
+        self.assertAlmostEqual(reward_state["elapsed_time"], 1.5)
 
 
 if __name__ == "__main__":

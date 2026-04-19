@@ -504,14 +504,14 @@ class PCGVesselEnv(gym.Env):
     def _build_reward_state(self, goal_reached=False):
         dx = float(self.state["distance_to_goal_x"])
         dy = float(self.state["distance_to_goal_y"])
-        episode_start_time = getattr(self, "episode_start_time", None)
-        elapsed_time = 0.0 if episode_start_time is None else max(0.0, float(time.time() - episode_start_time))
+        dt = float(self.step_sleep) * float(self.action_repeat)
+        elapsed_time = max(0.0, float(getattr(self, "timestep", 0))) * dt
         return {
             "distance_to_goal": float(math.sqrt(dx**2 + dy**2)),
             "heading_error": float(self.state.get("heading_error", 0.0)),
             "min_obstacle_distance": float(self.min_obstacle_distance),
             "cross_track_error": float(self.cross_track_error),
-            "dt": float(self.step_sleep) * float(self.action_repeat),
+            "dt": dt,
             "v_surge": float(self.state.get("v_surge", 0.0)),
             "v_los": float(self.state.get("v_los", 0.0)),
             "speed": float(self.state.get("speed", 0.0)),
