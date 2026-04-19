@@ -35,8 +35,9 @@ class _FakeVecEnv:
     def step(self, action):
         info = {
             "end_reason": "goal_reached",
-            "distance_to_goal_x": 0.0,
-            "distance_to_goal_y": 0.0,
+            "distance_to_final_goal": 9.0,
+            "distance_to_goal_x": 3.0,
+            "distance_to_goal_y": 4.0,
             "path_length_ratio": 1.0,
         }
         return (
@@ -85,7 +86,7 @@ class EvalSuiteSemanticsTests(unittest.TestCase):
                 mock.patch.object(eval_suite, "build_stage_specs", return_value=stages),
                 mock.patch.object(eval_suite, "dump_trajectory"),
             ):
-                eval_suite.run_eval_suite(
+                results = eval_suite.run_eval_suite(
                     config=config,
                     run_dir=run_dir,
                     model=fake_model,
@@ -95,6 +96,7 @@ class EvalSuiteSemanticsTests(unittest.TestCase):
                     episodes_per_seed=2,
                     deterministic=True,
                 )
+                self.assertTrue((results["results"]["final_dist"] == 9.0).all())
 
         self.assertEqual(fake_env.seed_calls, [43, 44])
         self.assertEqual(fake_env.reset_calls, 4)

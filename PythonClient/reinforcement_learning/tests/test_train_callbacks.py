@@ -20,12 +20,73 @@ class _FakeTrainingEnv:
 
 
 class _FakeModel:
-    def __init__(self, env):
+    def __init__(self, env, logger=None):
         self._env = env
         self._last_obs = "previous-observation"
+        self.logger = logger if logger is not None else _FakeLogger()
 
     def get_env(self):
         return self._env
+
+
+class _FakeLogger:
+    def __init__(self):
+        self.records = {}
+
+    def record(self, key, value, *args, **kwargs):
+        self.records[key] = value
+
+
+class EpisodeEndCallbackTests(unittest.TestCase):
+    def test_episode_end_callback_records_explicit_terminal_and_motion_metrics(self):
+        callback = train.EpisodeEndCallback(use_wandb=False)
+        model = _FakeModel(_FakeTrainingEnv(), logger=_FakeLogger())
+        callback.model = model
+        callback.num_timesteps = 321
+
+        callback.locals = {
+            "actions": [[0.2, 0.1]],
+            "infos": [
+                {
+                    "reward_components": {"progress": 1.25},
+                    "v_surge": 0.4,
+                    "speed": 0.0,
+                }
+            ],
+        }
+        self.assertTrue(callback._on_step())
+        self.assertEqual(model.logger.records, {})
+
+        callback.locals = {
+            "actions": [[0.4, -0.2]],
+            "infos": [
+                {
+                    "end_reason": "timeout",
+                    "distance_to_final_goal": 12.5,
+                    "distance_to_current_wp": 3.5,
+                    "waypoints_reached": 1,
+                    "episode_num": 7,
+                    "path_length_ratio": 1.2,
+                    "curriculum_stage": 2,
+                    "reward_components": {"safety": -0.5},
+                    "v_surge": 0.6,
+                    "speed": 1.0,
+                }
+            ],
+        }
+
+        self.assertTrue(callback._on_step())
+
+        self.assertEqual(model.logger.records["episode/timeout"], 1)
+        self.assertEqual(model.logger.records["episode/goal_reached"], 0)
+        self.assertAlmostEqual(model.logger.records["episode/final_distance_to_goal"], 12.5)
+        self.assertAlmostEqual(model.logger.records["episode/final_distance_to_current_wp"], 3.5)
+        self.assertAlmostEqual(model.logger.records["episode/mean_v_surge"], 0.5)
+        self.assertAlmostEqual(model.logger.records["episode/time_moving_frac"], 0.5)
+        self.assertAlmostEqual(model.logger.records["episode/mean_thrust"], 0.3)
+        self.assertAlmostEqual(model.logger.records["episode/mean_yaw_cmd"], -0.05)
+        self.assertAlmostEqual(model.logger.records["reward_components/progress"], 1.25)
+        self.assertAlmostEqual(model.logger.records["reward_components/safety"], -0.5)
 
 
 class EvalSuiteCallbackTests(unittest.TestCase):

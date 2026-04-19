@@ -126,9 +126,14 @@ class PCGVesselEnv(gym.Env):
             "success": False,
             "distance_to_goal_x": 0.0,
             "distance_to_goal_y": 0.0,
+            "distance_to_current_wp": 0.0,
+            "distance_to_final_goal": 0.0,
             "heading": 0.0,
             "heading_error": 0.0,
             "cross_track_error": 0.0,
+            "v_surge": 0.0,
+            "v_los": 0.0,
+            "speed": 0.0,
         }
 
 
@@ -494,6 +499,12 @@ class PCGVesselEnv(gym.Env):
             "goal_reached": bool(goal_reached),
         }
 
+    def _compute_motion_diagnostics(self, linear_velocity_x, linear_velocity_y, heading, goal_angle):
+        v_surge = float(linear_velocity_x * math.cos(heading) + linear_velocity_y * math.sin(heading))
+        v_los = float(linear_velocity_x * math.cos(goal_angle) + linear_velocity_y * math.sin(goal_angle))
+        speed = float(math.sqrt(linear_velocity_x**2 + linear_velocity_y**2))
+        return v_surge, v_los, speed
+
     def _retarget_current_waypoint(self):
         pos_x = self.state["position"][0]
         pos_y = self.state["position"][1]
@@ -652,6 +663,10 @@ class PCGVesselEnv(gym.Env):
         # Scalar distances to current and next waypoints
         distance_to_curr = np.sqrt(dx_curr**2 + dy_curr**2)
         distance_to_next = np.sqrt(dx_next**2 + dy_next**2) if dx_next != 0.0 or dy_next != 0.0 else 0.0
+        final_wp = self.waypoints[-1]
+        distance_to_final = np.sqrt((final_wp[0] - pos_x)**2 + (final_wp[1] - pos_y)**2)
+        self.state["distance_to_current_wp"] = float(distance_to_curr)
+        self.state["distance_to_final_goal"] = float(distance_to_final)
 
         # Heading error to current waypoint, normalized to [-pi, pi]
         goal_angle = np.arctan2(dy_curr, dx_curr)
@@ -670,6 +685,15 @@ class PCGVesselEnv(gym.Env):
         linear_acceleration_x = vessel_state.kinematics_estimated.linear_acceleration.x_val
         linear_acceleration_y = vessel_state.kinematics_estimated.linear_acceleration.y_val
         angular_acceleration_z = vessel_state.kinematics_estimated.angular_acceleration.z_val
+        v_surge, v_los, speed = self._compute_motion_diagnostics(
+            linear_velocity_x,
+            linear_velocity_y,
+            heading,
+            goal_angle,
+        )
+        self.state["v_surge"] = v_surge
+        self.state["v_los"] = v_los
+        self.state["speed"] = speed
         self.cross_track_error = self._compute_cross_track_error(pos_x, pos_y)
         self.state["cross_track_error"] = self.cross_track_error
 
@@ -782,8 +806,11 @@ class PCGVesselEnv(gym.Env):
                     "reward_components": {},
                     "thrust": 0.0,
                     "yaw_cmd": 0.0,
-                    "distance_to_goal_x": 0.0,
-                    "distance_to_goal_y": 0.0,
+                    "distance_to_final_goal": 0.0,
+                    "distance_to_current_wp": 0.0,
+                    "v_surge": 0.0,
+                    "v_los": 0.0,
+                    "speed": 0.0,
                     "success": 0,
                     "collision": 0,
                     "episode_num": self.episode_count,
@@ -856,8 +883,11 @@ class PCGVesselEnv(gym.Env):
             "reward_components": components,
             "thrust": action[0],
             "yaw_cmd": action[1],
-            "distance_to_goal_x": abs(final_dist_x),
-            "distance_to_goal_y": abs(final_dist_y),
+            "distance_to_final_goal": float(self.state["distance_to_final_goal"]),
+            "distance_to_current_wp": float(self.state["distance_to_current_wp"]),
+            "v_surge": float(self.state["v_surge"]),
+            "v_los": float(self.state["v_los"]),
+            "speed": float(self.state["speed"]),
             "success": int(self.state["success"]),
             "collision": int(self.state["collision"]),
             "episode_num": self.episode_count,

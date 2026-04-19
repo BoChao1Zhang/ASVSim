@@ -54,10 +54,14 @@ class EpisodeEndCallback(BaseCallback):
         super().__init__(verbose)
         self.use_wandb = use_wandb
         self._ep_actions = []
+        self._ep_v_surge = []
+        self._ep_is_moving = []
         self._reward_component_sums = defaultdict(float)
 
     def _reset_episode_buffers(self):
         self._ep_actions = []
+        self._ep_v_surge = []
+        self._ep_is_moving = []
         self._reward_component_sums = defaultdict(float)
 
     def _on_step(self) -> bool:
@@ -65,6 +69,9 @@ class EpisodeEndCallback(BaseCallback):
         infos = self.locals["infos"]
         action = np.asarray(actions[0], dtype=np.float32).copy()
         self._ep_actions.append(action)
+        primary_info = infos[0] if infos else {}
+        self._ep_v_surge.append(float(primary_info.get("v_surge", 0.0)))
+        self._ep_is_moving.append(1.0 if float(primary_info.get("speed", 0.0)) > 0.0 else 0.0)
 
         for info in infos:
             for key, value in info.get("reward_components", {}).items():
@@ -74,15 +81,18 @@ class EpisodeEndCallback(BaseCallback):
             if reason is None:
                 continue
 
-            dx = float(info.get("distance_to_goal_x", 0.0))
-            dy = float(info.get("distance_to_goal_y", 0.0))
             ep_actions = np.asarray(self._ep_actions, dtype=np.float32) if self._ep_actions else np.zeros((1, 2), dtype=np.float32)
+            ep_v_surge = np.asarray(self._ep_v_surge, dtype=np.float32) if self._ep_v_surge else np.zeros(1, dtype=np.float32)
+            ep_is_moving = np.asarray(self._ep_is_moving, dtype=np.float32) if self._ep_is_moving else np.zeros(1, dtype=np.float32)
             metrics = {
                 **{f"episode/{label}": int(label == reason) for label in self._REASONS},
-                "episode/final_distance_to_goal": float(np.sqrt(dx**2 + dy**2)),
+                "episode/final_distance_to_goal": float(info.get("distance_to_final_goal", 0.0)),
+                "episode/final_distance_to_current_wp": float(info.get("distance_to_current_wp", 0.0)),
                 "episode/waypoints_reached": int(info.get("waypoints_reached", 0)),
                 "episode/mean_thrust": float(ep_actions[:, 0].mean()),
                 "episode/mean_yaw_cmd": float(ep_actions[:, 1].mean()),
+                "episode/mean_v_surge": float(ep_v_surge.mean()),
+                "episode/time_moving_frac": float(ep_is_moving.mean()),
                 "episode/count": int(info.get("episode_num", 0)),
                 "episode/path_length_ratio": float(info.get("path_length_ratio", 0.0)),
                 "curriculum/stage": float(info.get("episode_stage_before_promotion", info.get("curriculum_stage", 0))),
