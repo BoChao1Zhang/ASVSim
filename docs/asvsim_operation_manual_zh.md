@@ -17,7 +17,7 @@
 | `E:\code\ASVSim` | 仓库根目录 |
 | `E:\code\ASVSim\build.cmd` | Windows 下原生库与 Unreal 插件构建入口 |
 | `E:\code\ASVSim\Unreal\Environments\PortEnv\Blocks.uproject` | 当前主用 Unreal 工程 |
-| `E:\code\ASVSim\Unreal\Environments\PortEnv\Config\DefaultEngine.ini` | 默认启动地图配置，当前是 `FlyingExampleMap` |
+| `E:\code\ASVSim\Unreal\Environments\PortEnv\Config\DefaultEngine.ini` | 默认启动地图配置，当前是 `GenerationTopDownTest` |
 | `E:\code\ASVSim\Unreal\Environments\PortEnv\package.bat` | 打包 `PortEnv` 为 `Blocks.exe` |
 | `E:\code\ASVSim\PythonClient\requirements.txt` | Python 依赖列表 |
 | `E:\code\ASVSim\PythonClient\reinforcement_learning\crossq_vessel.py` | 当前 Vessel RL 训练入口 |
@@ -129,7 +129,7 @@ Set-Location E:\code\ASVSim\Unreal\Environments\PortEnv
 当前工程默认启动地图是：
 
 ```text
-/Game/FlyingCPP/Maps/FlyingExampleMap
+/Game/FlyingCPP/Maps/GenerationTopDownTest
 ```
 
 在编辑器中点击 `Play` 后，AirSim RPC 服务才会真正进入可连接状态。
@@ -323,7 +323,7 @@ AirSim 的配置搜索顺序中，这个位置是最稳定的默认方案。
 步骤：
 
 1. 打开 `Blocks.uproject`。
-2. 确认地图为 `FlyingExampleMap`。
+2. 确认地图为默认 PortEnv 地图 `GenerationTopDownTest`。
 3. 点击 `Play`。
 4. 用 Python 客户端连接 RPC。
 
@@ -351,7 +351,7 @@ E:\ASVSimBuilds\Blocks\Blocks.exe
 说明：
 
 - `package.bat` 会先构建编辑器目标，再调用 Unreal 的 `RunUAT BuildCookRun`。
-- `PortEnv\Config\DefaultGame.ini` 已经包含 `FlyingExampleMap` 的烹饪配置。
+- `PortEnv\Config\DefaultGame.ini` 已经包含 `GenerationTopDownTest` 与 `FlyingExampleMap` 的烹饪配置，其中 RL 默认地图是 `GenerationTopDownTest`。
 - 当前 RL 训练脚本默认会自己启动一个模拟器进程，因此 **训练更推荐使用打包后的 `Blocks.exe`**。
 
 ## 7. 启动 RL 训练
@@ -868,7 +868,7 @@ update_from_git.bat
 
 3. 写好 `Documents\AirSim\settings.json`。
 
-4. 打开 `Blocks.uproject` 并在 `FlyingExampleMap` 里点击 `Play`。
+4. 打开 `Blocks.uproject`，保持项目默认地图 `GenerationTopDownTest`，然后点击 `Play`。
 
 5. 跑通 API 烟测：
 

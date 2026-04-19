@@ -143,6 +143,35 @@ TArray<FPCGObstacleSpec>* FindObstacleSpecArrayProperty(UObject* Object, const F
 	return nullptr;
 }
 
+bool IsShipObstacleClassPath(const FString& ClassPath)
+{
+	return ClassPath.Contains(TEXT("Boat_Blueprint"))
+		|| ClassPath.Contains(TEXT("Barge_Blueprint"))
+		|| ClassPath.Contains(TEXT("BP_CargoPawn"))
+		|| ClassPath.Contains(TEXT("BP_NPCSpawn"));
+}
+
+bool IsShipObstacleClass(const TSoftClassPtr<AActor>& ObstacleClass)
+{
+	return IsShipObstacleClassPath(ObstacleClass.ToSoftObjectPath().ToString());
+}
+
+bool IsShipObstacleClass(const UClass* ObstacleClass)
+{
+	return ObstacleClass && IsShipObstacleClassPath(ObstacleClass->GetPathName());
+}
+
+void DisableDynamicShipObstacleSpeeds(TArray<FPCGObstacleSpec>& Catalog)
+{
+	for (FPCGObstacleSpec& Spec : Catalog) {
+		if (!IsShipObstacleClass(Spec.ObstacleClass)) {
+			continue;
+		}
+		Spec.MinSpeed = 0.0f;
+		Spec.MaxSpeed = 0.0f;
+	}
+}
+
 void ResetTransformArrayIfPresent(UObject* Object, const FName PropertyName)
 {
 	if (TArray<FTransform>* TransformArray = FindTransformArrayProperty(Object, PropertyName)) {
@@ -461,9 +490,10 @@ void AGenerationManager::InitializeDefaultObstacleCatalog()
 	};
 
 	AppendSpec(TEXT("/AirSim/Blueprints/BP_BuoySpawn.BP_BuoySpawn"), 80.0f, 0.40f, 0.0f, 0.0f, false);
-	AppendSpec(TEXT("/AirSim/Blueprints/Boat_Blueprint.Boat_Blueprint"), 300.0f, 0.30f, 0.0f, 1500.0f, true);
-	AppendSpec(TEXT("/AirSim/Blueprints/ShippingSim/CargoVessel/Barge_Blueprint.Barge_Blueprint"), 700.0f, 0.20f, 0.0f, 400.0f, true);
-	AppendSpec(TEXT("/AirSim/Blueprints/ShippingSim/CargoVessel/BP_CargoPawn.BP_CargoPawn"), 900.0f, 0.10f, 0.0f, 300.0f, true);
+	AppendSpec(TEXT("/AirSim/Blueprints/Boat_Blueprint.Boat_Blueprint"), 300.0f, 0.30f, 0.0f, 0.0f, true);
+	AppendSpec(TEXT("/AirSim/Blueprints/ShippingSim/CargoVessel/Barge_Blueprint.Barge_Blueprint"), 700.0f, 0.20f, 0.0f, 0.0f, true);
+	AppendSpec(TEXT("/AirSim/Blueprints/ShippingSim/CargoVessel/BP_CargoPawn.BP_CargoPawn"), 900.0f, 0.10f, 0.0f, 0.0f, true);
+	DisableDynamicShipObstacleSpeeds(ObstacleCatalog);
 }
 
 // Called when the game starts or when spawned
@@ -702,9 +732,12 @@ void AGenerationManager::SpawnObstaclesImmediate()
 		if (SpawnedObstacle) {
 			const float SpeedMin = FMath::Min(ObstacleSpeedMin, ObstacleSpeedMax);
 			const float SpeedMax = FMath::Max(ObstacleSpeedMin, ObstacleSpeedMax);
-			const double ObstacleSpeed = (SpeedMax > SpeedMin)
+			double ObstacleSpeed = (SpeedMax > SpeedMin)
 				? ObstacleStream.FRandRange(SpeedMin, SpeedMax)
 				: SpeedMin;
+			if (IsShipObstacleClass(ObstacleClass)) {
+				ObstacleSpeed = 0.0;
+			}
 
 			SetBoolProperty(SpawnedObstacle, TEXT("CustomVelocity"), true);
 			SetBoolProperty(SpawnedObstacle, TEXT("ApplyVelocityOnBeginPlay"), false);
@@ -954,6 +987,7 @@ int32 AGenerationManager::SpawnAdvancedObstacles()
 	if (ObstacleCatalog.Num() == 0) {
 		InitializeDefaultObstacleCatalog();
 	}
+	DisableDynamicShipObstacleSpeeds(ObstacleCatalog);
 
 	FRandomStream* StreamProperty = FindRandomStreamProperty(this, TEXT("stream"));
 	FRandomStream FallbackStream(CachedSeed);
@@ -1276,9 +1310,10 @@ TArray<FPCGObstacleSpec> LoadDefaultNativeCatalog()
 		Catalog.Add(Spec);
 	};
 	AddSpec(TEXT("/AirSim/Blueprints/BP_BuoySpawn.BP_BuoySpawn"), 80.0f, 0.40f, 0.0f, 0.0f, false);
-	AddSpec(TEXT("/AirSim/Blueprints/Boat_Blueprint.Boat_Blueprint"), 300.0f, 0.30f, 0.0f, 1500.0f, true);
-	AddSpec(TEXT("/AirSim/Blueprints/ShippingSim/CargoVessel/Barge_Blueprint.Barge_Blueprint"), 700.0f, 0.20f, 0.0f, 400.0f, true);
-	AddSpec(TEXT("/AirSim/Blueprints/ShippingSim/CargoVessel/BP_CargoPawn.BP_CargoPawn"), 900.0f, 0.10f, 0.0f, 300.0f, true);
+	AddSpec(TEXT("/AirSim/Blueprints/Boat_Blueprint.Boat_Blueprint"), 300.0f, 0.30f, 0.0f, 0.0f, true);
+	AddSpec(TEXT("/AirSim/Blueprints/ShippingSim/CargoVessel/Barge_Blueprint.Barge_Blueprint"), 700.0f, 0.20f, 0.0f, 0.0f, true);
+	AddSpec(TEXT("/AirSim/Blueprints/ShippingSim/CargoVessel/BP_CargoPawn.BP_CargoPawn"), 900.0f, 0.10f, 0.0f, 0.0f, true);
+	DisableDynamicShipObstacleSpeeds(Catalog);
 	return Catalog;
 }
 
@@ -1363,6 +1398,7 @@ TArray<FPCGObstacleSpec> LoadCatalogFromActor(const AActor* Actor)
 		}
 	}
 
+	DisableDynamicShipObstacleSpeeds(Catalog);
 	return Catalog;
 }
 
@@ -1543,8 +1579,7 @@ int32 SpawnAdvancedObstaclesNative(AActor* Actor, const FPCGNativeConfig& Cfg, c
 	if (!LeftPoints) LeftPoints = FindTransformArrayProperty(Actor, TEXT("aleft"));
 	TArray<FTransform>* RightPoints = FindTransformArrayProperty(Actor, TEXT("right"));
 	if (!RightPoints) RightPoints = FindTransformArrayProperty(Actor, TEXT("aright"));
-	TArray<AActor*>* GeneratedActors = FindActorArrayProperty(Actor, TEXT("Generated"));
-	if (!GeneratedActors) GeneratedActors = FindActorArrayProperty(Actor, TEXT("generated"));
+	TArray<AActor*>* GeneratedActors = FindGeneratedActorArrayProperty(Actor);
 	if (!RoadPoints || !LeftPoints || !RightPoints) return 0;
 	const int32 N = FMath::Min(RoadPoints->Num(), FMath::Min(LeftPoints->Num(), RightPoints->Num()));
 	if (N < 4) return 0;

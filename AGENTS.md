@@ -16,6 +16,13 @@ This file records the local development environment and the standard build / deb
 - User-facing responses must be in Chinese.
 - Use standard Markdown.
 
+## Subagent And UE Skill Policy
+
+- When spawning implementation subagents for this repository, use model `gpt-5.4` with reasoning effort `high` unless the user explicitly requests otherwise.
+- When spawning review subagents for this repository, use model `gpt-5.4` with reasoning effort `xhigh` unless the user explicitly requests otherwise.
+- For Unreal Engine development work, always load the `ue-project-dev` skill before code changes, Blueprint edits, editor-side validation, or Unreal API research.
+- For Unreal Editor work, prefer `UE Editor MCP` for editor connectivity, asset inspection, Blueprint or widget changes, compile checks, and editor log validation.
+
 ## Evidence And Search
 
 - Distinguish local code facts from external facts.
@@ -62,7 +69,7 @@ echo %VCToolsVersion%
 ## Primary Unreal Project
 
 - Active Unreal project: `E:\code\ASVSim\Unreal\Environments\PortEnv\Blocks.uproject`
-- Relevant runtime map for vessel work: `FlyingExampleMap`
+- Default runtime / RL map for PortEnv vessel work: `GenerationTopDownTest`
 
 ## Standard Build Entry Points
 
@@ -117,6 +124,8 @@ build.cmd --RelWithDebInfo
 "E:\ProgramFile\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe" "E:\code\ASVSim\Unreal\Environments\PortEnv\Blocks.uproject"
 ```
 
+- For routine RL runs, do not pass an explicit map override on the command line.
+- PortEnv already defaults to `GenerationTopDownTest` via `DefaultEngine.ini` and `DefaultEditor.ini`.
 - If using MCP-based UE tools, wait until:
   - editor process is alive
   - editor world is ready
@@ -130,7 +139,7 @@ build.cmd --RelWithDebInfo
 2. Run `build.cmd --Release`.
 3. Run Unreal `Build.bat BlocksEditor Win64 Development ...`.
 4. Start Editor on `Blocks.uproject`.
-5. Validate in `FlyingExampleMap` if the change affects runtime.
+5. Validate in the project default PortEnv map `GenerationTopDownTest` if the change affects runtime.
 
 ### For vessel / runtime crash fixes
 
@@ -147,7 +156,7 @@ build.cmd --RelWithDebInfo
 - The main crash chain investigated recently was:
 
 ```markdown
-FlyingExampleMap vessel enters runtime
+GenerationTopDownTest vessel enters runtime
 -> vessel physics / sensor update path runs
 -> debug draw was executed off the game thread
 -> Unreal asserted with `!bPostTickComponentUpdate`
