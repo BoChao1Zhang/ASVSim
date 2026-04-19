@@ -31,6 +31,16 @@ class _FakeVessel:
         return self._collision_info
 
 
+class _FixedNoiseRng:
+    def __init__(self, noise_value):
+        self.noise_value = noise_value
+
+    def normal(self, loc=0.0, scale=1.0, size=None):
+        if size is not None:
+            return np.full(size, self.noise_value, dtype=np.float32)
+        return self.noise_value
+
+
 class ObservationSemanticsTests(unittest.TestCase):
     def test_world_velocity_to_body_frame_rotates_into_surge_and_sway(self):
         surge, sway = world_velocity_to_body_frame(
@@ -97,6 +107,54 @@ class ObservationSemanticsTests(unittest.TestCase):
         obs = env._get_obs()
 
         self.assertEqual(obs.shape, (54,))
+        self.assertAlmostEqual(obs[11], 0.0, places=6)
+        self.assertAlmostEqual(obs[12], -1.0, places=6)
+
+    def test_get_obs_uses_observed_heading_for_body_frame_velocity_slots_when_noise_is_enabled(self):
+        env = object.__new__(PCGVesselEnv)
+        env.waypoints = [(10.0, 0.0)]
+        env.current_waypoint_idx = 0
+        env.state = {
+            "position": np.zeros(3, dtype=np.float32),
+            "prev_position": np.zeros(3, dtype=np.float32),
+            "collision": False,
+        }
+        env.timestep = 2
+        env.prev_waypoint_x = 0.0
+        env.prev_waypoint_y = 0.0
+        env.prev_actions = np.array([0.0, 0.0], dtype=np.float32)
+        env.lidar_noise_sigma = 0.0
+        env.heading_noise_sigma = 1.0
+        env.rng = _FixedNoiseRng(math.pi / 2.0)
+        env._reset_collision_ts = 0
+        env.FILTER_LABELS = set()
+
+        vessel_state = SimpleNamespace(
+            kinematics_estimated=SimpleNamespace(
+                position=_make_vector(0.0, 0.0, 0.0),
+                orientation=SimpleNamespace(
+                    x_val=0.0,
+                    y_val=0.0,
+                    z_val=0.0,
+                    w_val=1.0,
+                ),
+                linear_velocity=_make_vector(1.0, 0.0, 0.0),
+                linear_acceleration=_make_vector(0.0, 0.0, 0.0),
+                angular_acceleration=_make_vector(0.0, 0.0, 0.0),
+            )
+        )
+        lidar_data = SimpleNamespace(
+            point_cloud=np.zeros(3600 * 3, dtype=np.float32),
+            groundtruth=[b"None"] * 3600,
+        )
+        collision_info = SimpleNamespace(has_collided=False, time_stamp=0)
+        env.vessel = _FakeVessel(vessel_state, lidar_data, collision_info)
+
+        obs = env._get_obs()
+
+        self.assertAlmostEqual(obs[8], math.pi / 2.0, places=6)
+        self.assertAlmostEqual(obs[9], 1.0, places=6)
+        self.assertAlmostEqual(obs[10], 0.0, places=6)
         self.assertAlmostEqual(obs[11], 0.0, places=6)
         self.assertAlmostEqual(obs[12], -1.0, places=6)
 

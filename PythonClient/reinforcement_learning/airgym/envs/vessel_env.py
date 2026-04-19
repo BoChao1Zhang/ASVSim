@@ -738,10 +738,10 @@ class PCGVesselEnv(gym.Env):
         linear_acceleration_x = vessel_state.kinematics_estimated.linear_acceleration.x_val
         linear_acceleration_y = vessel_state.kinematics_estimated.linear_acceleration.y_val
         angular_acceleration_z = vessel_state.kinematics_estimated.angular_acceleration.z_val
-        body_frame_surge, body_frame_sway = world_velocity_to_body_frame(
+        observed_body_frame_surge, observed_body_frame_sway = world_velocity_to_body_frame(
             linear_velocity_x,
             linear_velocity_y,
-            heading,
+            observed_heading,
         )
         v_surge, v_los, speed = self._compute_motion_diagnostics(
             linear_velocity_x,
@@ -764,7 +764,7 @@ class PCGVesselEnv(gym.Env):
                 distance_to_next,
                 observed_heading_error,
                 np.sin(observed_heading), np.cos(observed_heading),
-                body_frame_surge, body_frame_sway,
+                observed_body_frame_surge, observed_body_frame_sway,
                 linear_acceleration_x, linear_acceleration_y,
                 angular_acceleration_z,
             ]),

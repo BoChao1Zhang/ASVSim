@@ -9,6 +9,7 @@ import pandas as pd
 
 import eval_suite
 from airgym.envs.vessel_env import PCGVesselEnv
+from config import OBSERVATION_SCHEMA_VERSION
 
 
 class _FakeBaseEnv:
@@ -190,6 +191,25 @@ class EvalSuiteSemanticsTests(unittest.TestCase):
         base_row = stage_summary.loc[stage_summary["stage"] == "base"].iloc[0]
         self.assertAlmostEqual(base_row["sim_crash_rate"], 0.5)
         self.assertAlmostEqual(overall["sim_crash_rate"], 0.25)
+
+    def test_eval_suite_rejects_run_config_without_observation_schema_version(self):
+        with TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir)
+            (run_dir / "config.yaml").write_text("env:\n  yaw_angle_scale: 0.6\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "missing env\\.observation_schema_version"):
+                eval_suite.require_supported_observation_schema(run_dir)
+
+    def test_eval_suite_rejects_run_config_with_mismatched_observation_schema_version(self):
+        with TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir)
+            (run_dir / "config.yaml").write_text("env:\n  observation_schema_version: 1\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                ValueError,
+                rf"observation_schema_version=1.*expected {OBSERVATION_SCHEMA_VERSION}",
+            ):
+                eval_suite.require_supported_observation_schema(run_dir)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 DATA_ROOT = REPO_ROOT / "data" / "reinforcement_learning"
 RUNS_ROOT = DATA_ROOT / "runs"
 DEFAULT_CONFIG = SCRIPT_DIR / "configs" / "crossq.yaml"
+OBSERVATION_SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -57,6 +58,7 @@ class EnvConfig:
     lidar_noise_sigma: float = 0.0
     heading_noise_sigma: float = 0.0
     waypoint_radius: float = 10.0
+    observation_schema_version: int = OBSERVATION_SCHEMA_VERSION
     yaw_angle_scale: float = 0.25
 
 

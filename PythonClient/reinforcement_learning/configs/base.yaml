@@ -19,6 +19,7 @@ env:
   lidar_noise_sigma: 0.0
   heading_noise_sigma: 0.0
   waypoint_radius: 10.0
+  observation_schema_version: 2
   yaw_angle_scale: 0.6
 
 reward:
