@@ -28,6 +28,10 @@ reward:
   action_rate: 0.05
   cross_track: 0.2
   step_penalty: 0.1
+  forward_velocity: 0.5
+  stall_penalty: 0.1
+  stall_speed_threshold: 0.3
+  stall_warmup_seconds: 10.0
   terminal: 1.0
   terminal_collision: -100.0
   terminal_goal: 500.0

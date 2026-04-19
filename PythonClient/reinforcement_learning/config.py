@@ -25,6 +25,10 @@ class RewardConfig:
     action_rate: float = 0.05
     cross_track: float = 0.2
     step_penalty: float = 0.1
+    forward_velocity: float = 0.5
+    stall_penalty: float = 0.1
+    stall_speed_threshold: float = 0.3
+    stall_warmup_seconds: float = 10.0
     terminal: float = 1.0
     terminal_collision: float = -100.0
     terminal_goal: float = 500.0
@@ -212,6 +216,14 @@ def validate_config(config) -> None:
         raise ValueError(
             "env.num_dynamic_obstacles is not supported because dynamic obstacle spawning is disabled at runtime; use 0."
         )
+    if float(config.reward.forward_velocity) < 0.0:
+        raise ValueError("reward.forward_velocity must be >= 0.0")
+    if float(config.reward.stall_penalty) < 0.0:
+        raise ValueError("reward.stall_penalty must be >= 0.0")
+    if float(config.reward.stall_speed_threshold) < 0.0:
+        raise ValueError("reward.stall_speed_threshold must be >= 0.0")
+    if float(config.reward.stall_warmup_seconds) < 0.0:
+        raise ValueError("reward.stall_warmup_seconds must be >= 0.0")
     for index, stage in enumerate(config.curriculum.stages):
         if int(stage.num_dynamic_obstacles) != 0:
             raise ValueError(
