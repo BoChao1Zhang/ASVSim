@@ -199,10 +199,20 @@ def _find_curriculum_file_declaration(config_path: Path) -> Path | None:
     return None
 
 
-def _resolve_curriculum_path(config_path: Path, curriculum_file: str | Path) -> Path | None:
+def _resolve_curriculum_path(
+    config_path: Path,
+    curriculum_file: str | Path,
+    *,
+    prefer_leaf_config_dir: bool = False,
+) -> Path | None:
     requested = Path(curriculum_file)
     if requested.is_absolute():
         return requested if requested.exists() else None
+
+    if prefer_leaf_config_dir:
+        candidate = (config_path.resolve().parent / requested).resolve()
+        if candidate.exists():
+            return candidate
 
     declaration_path = _find_curriculum_file_declaration(config_path)
     if declaration_path is None:
@@ -214,12 +224,21 @@ def _resolve_curriculum_path(config_path: Path, curriculum_file: str | Path) -> 
     return None
 
 
-def _merge_curriculum_file(config: DictConfig, config_path: Path) -> DictConfig:
+def _merge_curriculum_file(
+    config: DictConfig,
+    config_path: Path,
+    *,
+    prefer_leaf_config_dir: bool = False,
+) -> DictConfig:
     curriculum_file = config.curriculum.file
     if not curriculum_file:
         return config
 
-    curriculum_path = _resolve_curriculum_path(config_path, curriculum_file)
+    curriculum_path = _resolve_curriculum_path(
+        config_path,
+        curriculum_file,
+        prefer_leaf_config_dir=prefer_leaf_config_dir,
+    )
     if curriculum_path is None:
         return config
     curriculum_cfg = OmegaConf.load(curriculum_path)
@@ -246,7 +265,11 @@ def load_config(config_path: str | Path, overrides: Sequence[str] | None = None)
     curriculum_file_overrides = [item for item in normalized_overrides if item.startswith("curriculum.file=")]
     if curriculum_file_overrides:
         merged = OmegaConf.merge(merged, OmegaConf.from_dotlist(curriculum_file_overrides))
-    merged = _merge_curriculum_file(merged, config_file)
+    merged = _merge_curriculum_file(
+        merged,
+        config_file,
+        prefer_leaf_config_dir=bool(curriculum_file_overrides),
+    )
 
     if normalized_overrides:
         override_cfg = OmegaConf.from_dotlist(normalized_overrides)

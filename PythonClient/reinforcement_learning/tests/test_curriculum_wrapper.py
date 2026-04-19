@@ -114,6 +114,34 @@ class CurriculumWrapperTests(unittest.TestCase):
         self.assertEqual(config.curriculum.stages[0].name, "custom_override_stage")
         self.assertEqual(config.curriculum.stages[0].num_obstacles, 7)
 
+    def test_relative_curriculum_file_override_resolves_from_leaf_config_directory(self):
+        with TemporaryDirectory() as temp_dir:
+            child_dir = Path(temp_dir) / "child_configs"
+            child_dir.mkdir()
+            child_config = child_dir / "child.yaml"
+            child_curriculum = child_dir / "relative_curriculum.yaml"
+            relative_base = Path(os.path.relpath(DEFAULT_CONFIG.with_name("base.yaml"), child_dir))
+            child_config.write_text(f"extends: {relative_base.as_posix()}\n", encoding="utf-8")
+            child_curriculum.write_text(
+                "stages:\n"
+                "  - name: child_relative_override_stage\n"
+                "    num_obstacles: 5\n"
+                "    num_dynamic_obstacles: 0\n"
+                "    num_waypoints: 2\n"
+                "    length: 8\n"
+                "    angle_range: [-12.0, 12.0]\n",
+                encoding="utf-8",
+            )
+
+            config = load_config(
+                child_config,
+                ["curriculum.file=relative_curriculum.yaml"],
+            )
+
+        self.assertEqual(len(config.curriculum.stages), 1)
+        self.assertEqual(config.curriculum.stages[0].name, "child_relative_override_stage")
+        self.assertEqual(config.curriculum.stages[0].num_obstacles, 5)
+
     def test_validate_config_rejects_enabled_curriculum_without_stages(self):
         config = load_config(DEFAULT_CONFIG)
         config.curriculum.stages = []
