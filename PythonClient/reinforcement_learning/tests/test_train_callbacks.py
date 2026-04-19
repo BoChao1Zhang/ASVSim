@@ -50,7 +50,7 @@ class EpisodeEndCallbackTests(unittest.TestCase):
                 {
                     "reward_components": {"progress": 1.25},
                     "v_surge": 0.4,
-                    "speed": 0.0,
+                    "speed": 0.29,
                 }
             ],
         }

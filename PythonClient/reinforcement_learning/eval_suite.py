@@ -393,7 +393,7 @@ def run_eval_suite(
 
                     info = info[0]
                     end_reason = info.get("end_reason", "unknown")
-                    final_dist = float(info.get("distance_to_final_goal", 0.0))
+                    final_dist = float(info.get("distance_to_final_goal", np.nan))
                     row = {
                         "stage": stage["name"],
                         "seed": seed_value,

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 import eval_suite
+from airgym.envs.vessel_env import PCGVesselEnv
 
 
 class _FakeBaseEnv:
@@ -57,6 +58,53 @@ class _FakeModel:
 
 
 class EvalSuiteSemanticsTests(unittest.TestCase):
+    def test_pcg_vessel_env_sim_crash_uses_last_known_distances(self):
+        env = PCGVesselEnv.__new__(PCGVesselEnv)
+        env.sim_launch_mode = "exe"
+        env.single_obs_size = 54
+        env.n_stack = 1
+        env.episode_count = 11
+        env.timestep = 3
+        env._restart_sim = lambda: None
+        env._step_inner = mock.Mock(side_effect=RuntimeError("sim blew up"))
+        env.state = {
+            "vessel_state": object(),
+            "distance_to_final_goal": 17.5,
+            "distance_to_current_wp": 4.25,
+            "v_surge": 0.6,
+            "v_los": 0.4,
+            "speed": 0.8,
+        }
+
+        _, _, terminated, truncated, info = env.step(np.array([0.0, 0.0], dtype=np.float32))
+
+        self.assertFalse(terminated)
+        self.assertTrue(truncated)
+        self.assertEqual(info["end_reason"], "sim_crash")
+        self.assertAlmostEqual(info["distance_to_final_goal"], 17.5)
+        self.assertAlmostEqual(info["distance_to_current_wp"], 4.25)
+
+    def test_pcg_vessel_env_sim_crash_uses_nan_without_last_known_distances(self):
+        env = PCGVesselEnv.__new__(PCGVesselEnv)
+        env.sim_launch_mode = "exe"
+        env.single_obs_size = 54
+        env.n_stack = 1
+        env.episode_count = 12
+        env.timestep = 0
+        env._restart_sim = lambda: None
+        env._step_inner = mock.Mock(side_effect=RuntimeError("sim blew up"))
+        env.state = {
+            "vessel_state": None,
+        }
+
+        _, _, terminated, truncated, info = env.step(np.array([0.0, 0.0], dtype=np.float32))
+
+        self.assertFalse(terminated)
+        self.assertTrue(truncated)
+        self.assertEqual(info["end_reason"], "sim_crash")
+        self.assertTrue(np.isnan(info["distance_to_final_goal"]))
+        self.assertTrue(np.isnan(info["distance_to_current_wp"]))
+
     def test_run_eval_suite_reseeds_vec_env_for_each_seed_group(self):
         config = SimpleNamespace(
             train=SimpleNamespace(

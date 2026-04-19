@@ -505,6 +505,33 @@ class PCGVesselEnv(gym.Env):
         speed = float(math.sqrt(linear_velocity_x**2 + linear_velocity_y**2))
         return v_surge, v_los, speed
 
+    def _get_last_known_state_scalar(self, key):
+        value = getattr(self, "state", {}).get(key, math.nan)
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return float("nan")
+        return value if math.isfinite(value) else float("nan")
+
+    def _build_sim_crash_info(self):
+        return {
+            "reward": 0.0,
+            "reward_components": {},
+            "thrust": 0.0,
+            "yaw_cmd": 0.0,
+            "distance_to_final_goal": self._get_last_known_state_scalar("distance_to_final_goal"),
+            "distance_to_current_wp": self._get_last_known_state_scalar("distance_to_current_wp"),
+            "v_surge": self._get_last_known_state_scalar("v_surge"),
+            "v_los": self._get_last_known_state_scalar("v_los"),
+            "speed": self._get_last_known_state_scalar("speed"),
+            "success": 0,
+            "collision": 0,
+            "episode_num": self.episode_count,
+            "end_reason": "sim_crash",
+            "waypoints_reached": 0,
+            "path_length_ratio": 0.0,
+        }
+
     def _retarget_current_waypoint(self):
         pos_x = self.state["position"][0]
         pos_y = self.state["position"][1]
@@ -801,23 +828,7 @@ class PCGVesselEnv(gym.Env):
             if self.sim_launch_mode == "exe":
                 self._restart_sim()
                 obs = np.zeros(self.single_obs_size * self.n_stack, dtype=np.float32)
-                info = {
-                    "reward": 0.0,
-                    "reward_components": {},
-                    "thrust": 0.0,
-                    "yaw_cmd": 0.0,
-                    "distance_to_final_goal": 0.0,
-                    "distance_to_current_wp": 0.0,
-                    "v_surge": 0.0,
-                    "v_los": 0.0,
-                    "speed": 0.0,
-                    "success": 0,
-                    "collision": 0,
-                    "episode_num": self.episode_count,
-                    "end_reason": "sim_crash",
-                    "waypoints_reached": 0,
-                    "path_length_ratio": 0.0,
-                }
+                info = self._build_sim_crash_info()
                 return obs, 0.0, False, True, info
             raise RuntimeError(
                 "step() failed while attached to an external simulator/editor. "
