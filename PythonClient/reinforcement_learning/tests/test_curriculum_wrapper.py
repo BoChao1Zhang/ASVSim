@@ -66,6 +66,31 @@ class CurriculumWrapperTests(unittest.TestCase):
         self.assertGreater(len(config.curriculum.stages), 0)
         self.assertEqual(config.curriculum.stages[0].name, "stage_0_warmup")
 
+    def test_child_local_curriculum_file_does_not_override_base_declared_file(self):
+        with TemporaryDirectory() as temp_dir:
+            child_dir = Path(temp_dir) / "child_configs"
+            child_dir.mkdir()
+            child_config = child_dir / "child.yaml"
+            child_curriculum = child_dir / "curriculum.yaml"
+            relative_base = Path(os.path.relpath(DEFAULT_CONFIG.with_name("base.yaml"), child_dir))
+            child_config.write_text(f"extends: {relative_base.as_posix()}\n", encoding="utf-8")
+            child_curriculum.write_text(
+                "stages:\n"
+                "  - name: child_local_stage\n"
+                "    num_obstacles: 99\n"
+                "    num_dynamic_obstacles: 0\n"
+                "    num_waypoints: 1\n"
+                "    length: 1\n"
+                "    angle_range: [0.0, 0.0]\n",
+                encoding="utf-8",
+            )
+
+            config = load_config(child_config)
+
+        self.assertGreater(len(config.curriculum.stages), 0)
+        self.assertEqual(config.curriculum.stages[0].name, "stage_0_warmup")
+        self.assertNotEqual(config.curriculum.stages[0].name, "child_local_stage")
+
     def test_validate_config_rejects_enabled_curriculum_without_stages(self):
         config = load_config(DEFAULT_CONFIG)
         config.curriculum.stages = []

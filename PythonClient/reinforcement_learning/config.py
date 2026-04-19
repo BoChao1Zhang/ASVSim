@@ -138,6 +138,18 @@ def _to_plain_object(config: DictConfig):
     return OmegaConf.to_container(config, resolve=False)
 
 
+def _load_plain_config(config_path: Path):
+    loaded = OmegaConf.load(config_path)
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, DictConfig):
+        loaded = OmegaConf.create(loaded)
+    plain = _to_plain_object(loaded)
+    if isinstance(plain, dict):
+        return plain
+    return {}
+
+
 def _load_config_tree(config_path: Path) -> DictConfig:
     loaded = OmegaConf.load(config_path)
     if loaded is None:
@@ -171,16 +183,20 @@ def _iter_config_chain(config_path: Path):
         seen.add(current)
         yield current
 
-        loaded = OmegaConf.load(current)
-        if loaded is None:
-            return
-        if not isinstance(loaded, DictConfig):
-            loaded = OmegaConf.create(loaded)
-        plain = _to_plain_object(loaded)
+        plain = _load_plain_config(current)
         extends = plain.get("extends")
         if extends is None:
             return
         current = (current.parent / extends).resolve()
+
+
+def _find_curriculum_file_declaration(config_path: Path) -> Path | None:
+    for source_path in _iter_config_chain(config_path):
+        plain = _load_plain_config(source_path)
+        curriculum = plain.get("curriculum")
+        if isinstance(curriculum, dict) and "file" in curriculum:
+            return source_path
+    return None
 
 
 def _resolve_curriculum_path(config_path: Path, curriculum_file: str | Path) -> Path | None:
@@ -188,10 +204,13 @@ def _resolve_curriculum_path(config_path: Path, curriculum_file: str | Path) -> 
     if requested.is_absolute():
         return requested if requested.exists() else None
 
-    for source_path in _iter_config_chain(config_path):
-        candidate = (source_path.parent / requested).resolve()
-        if candidate.exists():
-            return candidate
+    declaration_path = _find_curriculum_file_declaration(config_path)
+    if declaration_path is None:
+        declaration_path = config_path.resolve()
+
+    candidate = (declaration_path.parent / requested).resolve()
+    if candidate.exists():
+        return candidate
     return None
 
 
