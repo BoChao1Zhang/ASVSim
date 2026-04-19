@@ -17,6 +17,19 @@ from airgym.envs.reward import RewardComputer
 from diagnostics import diag_log
 
 
+def world_velocity_to_body_frame(world_velocity_x, world_velocity_y, heading):
+    surge = world_velocity_x * math.cos(heading) + world_velocity_y * math.sin(heading)
+    sway = -world_velocity_x * math.sin(heading) + world_velocity_y * math.cos(heading)
+    return float(surge), float(sway)
+
+
+def project_velocity_onto_los(world_velocity_x, world_velocity_y, los_dx, los_dy):
+    los_norm = math.hypot(los_dx, los_dy)
+    if los_norm <= 1e-9:
+        return 0.0
+    return float((world_velocity_x * los_dx + world_velocity_y * los_dy) / los_norm)
+
+
 class PCGVesselEnv(gym.Env):
     """Gymnasium environment for vessel RL training with PCG terrain randomization."""
 
@@ -44,7 +57,7 @@ class PCGVesselEnv(gym.Env):
         lidar_noise_sigma=0.0,
         heading_noise_sigma=0.0,
         waypoint_radius=10.0,
-        yaw_angle_scale=0.25,
+        yaw_angle_scale=0.6,
     ):
         super().__init__()
 
@@ -508,8 +521,13 @@ class PCGVesselEnv(gym.Env):
         }
 
     def _compute_motion_diagnostics(self, linear_velocity_x, linear_velocity_y, heading, goal_angle):
-        v_surge = float(linear_velocity_x * math.cos(heading) + linear_velocity_y * math.sin(heading))
-        v_los = float(linear_velocity_x * math.cos(goal_angle) + linear_velocity_y * math.sin(goal_angle))
+        v_surge, _ = world_velocity_to_body_frame(linear_velocity_x, linear_velocity_y, heading)
+        v_los = project_velocity_onto_los(
+            linear_velocity_x,
+            linear_velocity_y,
+            math.cos(goal_angle),
+            math.sin(goal_angle),
+        )
         speed = float(math.sqrt(linear_velocity_x**2 + linear_velocity_y**2))
         return v_surge, v_los, speed
 
@@ -720,6 +738,11 @@ class PCGVesselEnv(gym.Env):
         linear_acceleration_x = vessel_state.kinematics_estimated.linear_acceleration.x_val
         linear_acceleration_y = vessel_state.kinematics_estimated.linear_acceleration.y_val
         angular_acceleration_z = vessel_state.kinematics_estimated.angular_acceleration.z_val
+        body_frame_surge, body_frame_sway = world_velocity_to_body_frame(
+            linear_velocity_x,
+            linear_velocity_y,
+            heading,
+        )
         v_surge, v_los, speed = self._compute_motion_diagnostics(
             linear_velocity_x,
             linear_velocity_y,
@@ -741,7 +764,7 @@ class PCGVesselEnv(gym.Env):
                 distance_to_next,
                 observed_heading_error,
                 np.sin(observed_heading), np.cos(observed_heading),
-                linear_velocity_x, linear_velocity_y,
+                body_frame_surge, body_frame_sway,
                 linear_acceleration_x, linear_acceleration_y,
                 angular_acceleration_z,
             ]),
