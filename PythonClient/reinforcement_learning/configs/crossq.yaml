@@ -16,6 +16,3 @@ train:
   total_timesteps: 2500000
   checkpoint_freq: 25000
   eval_freq: 50000
-
-curriculum:
-  enabled: false

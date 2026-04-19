@@ -1,4 +1,3 @@
-from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
@@ -6,10 +5,7 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from airgym.wrappers.curriculum import CurriculumWrapper
-from config import load_config
-
-
-BASE_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "base.yaml"
+from config import DEFAULT_CONFIG, load_config
 
 
 class _FakeEnv(gym.Env):
@@ -32,13 +28,13 @@ class _FakeEnv(gym.Env):
 
 
 class CurriculumWrapperTests(unittest.TestCase):
-    def test_base_config_enables_curriculum_by_default(self):
-        config = load_config(BASE_CONFIG)
+    def test_default_config_enables_curriculum_by_default(self):
+        config = load_config(DEFAULT_CONFIG)
 
         self.assertTrue(config.curriculum.enabled)
 
-    def test_base_config_starts_with_warmup_stage(self):
-        config = load_config(BASE_CONFIG)
+    def test_default_config_starts_with_warmup_stage(self):
+        config = load_config(DEFAULT_CONFIG)
         first_stage = config.curriculum.stages[0]
 
         self.assertEqual(first_stage.name, "stage_0_warmup")
