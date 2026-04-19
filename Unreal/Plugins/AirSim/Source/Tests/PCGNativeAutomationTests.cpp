@@ -1,4 +1,4 @@
-#if WITH_DEV_AUTOMATION_TESTS
+#if WITH_EDITOR && WITH_DEV_AUTOMATION_TESTS
 
 #include "Misc/AutomationTest.h"
 
@@ -565,4 +565,4 @@ bool FPCGNativeCurvedNarrowChannelBoundaryTest::RunTest(const FString& Parameter
     return CurvedWideHigh >= 0 && CurvedNarrowLow >= 0 && CurvedNarrowMedium >= 0 && CurvedNarrowHigh >= 0;
 }
 
-#endif // WITH_DEV_AUTOMATION_TESTS
+#endif // WITH_EDITOR && WITH_DEV_AUTOMATION_TESTS

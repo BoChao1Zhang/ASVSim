@@ -22,6 +22,7 @@ from config import (
     ensure_known_cli_tokens,
     load_config,
     make_run_dir,
+    resolve_simulator_path,
     save_resolved_config,
     validate_config,
     write_git_sha,
@@ -339,6 +340,8 @@ def main():
     overrides = legacy_train_overrides(args)
     config = load_config(args.config, overrides)
     validate_config(config)
+    if config.env.launch_sim == "exe":
+        config.env.sim_path = resolve_simulator_path(config.env.sim_path)
     set_global_seed(int(config.train.seed), torch_deterministic=bool(config.train.torch_deterministic))
     diag_log(
         "train_start",

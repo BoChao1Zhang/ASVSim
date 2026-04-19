@@ -106,11 +106,11 @@ public class AirSim : ModuleRules
         if (Target.Platform == UnrealTargetPlatform.Win64)
         {
             // for SHGetFolderPath.
-            PublicAdditionalLibraries.Add("Shell32.lib");
+            PublicSystemLibraries.Add("Shell32.lib");
 
             //for joystick support
-            PublicAdditionalLibraries.Add("dinput8.lib");
-            PublicAdditionalLibraries.Add("dxguid.lib");
+            PublicSystemLibraries.Add("dinput8.lib");
+            PublicSystemLibraries.Add("dxguid.lib");
         }
 
         if (Target.Platform == UnrealTargetPlatform.Linux)

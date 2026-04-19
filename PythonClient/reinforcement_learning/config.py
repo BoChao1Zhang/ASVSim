@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -217,6 +218,15 @@ def validate_config(config) -> None:
                 f"curriculum.stages[{index}].num_dynamic_obstacles is not supported because "
                 "dynamic obstacle spawning is disabled at runtime; use 0."
             )
+
+
+def resolve_simulator_path(sim_path: str | Path) -> str:
+    """Resolve a packaged launcher path to the real game binary when present."""
+    resolved = Path(os.path.abspath(str(sim_path)))
+    packaged_binary = resolved.parent / resolved.stem / "Binaries" / "Win64" / resolved.name
+    if packaged_binary.is_file():
+        return str(packaged_binary)
+    return str(resolved)
 
 
 def save_resolved_config(config: DictConfig, output_path: str | Path) -> None:

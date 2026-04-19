@@ -2260,6 +2260,7 @@ bool ASimModeBase::activateGeneration(bool landscape)
     //spawn landscape
     if (landscape)
     {
+#if WITH_EDITOR
         int32 MinX = 0;
         int32 MinY = 0;
         int32 MaxX = 504;
@@ -2302,6 +2303,10 @@ bool ASimModeBase::activateGeneration(bool landscape)
                 Landscape->RegisterAllComponents();
             }
         }
+#else
+        UE_LOG(LogTemp, Warning, TEXT("activateGeneration failed: landscape creation requires an Editor build."));
+        return false;
+#endif
     }
 	//spawn generation manager
     AActor* ExistingGenerationManager = FindGenerationManagerActor(World);

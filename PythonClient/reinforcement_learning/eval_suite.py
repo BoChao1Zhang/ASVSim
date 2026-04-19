@@ -14,7 +14,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from airgym.envs.vessel_env import PCGVesselEnv
-from config import DEFAULT_CONFIG, ensure_known_cli_tokens, load_config, validate_config
+from config import DEFAULT_CONFIG, ensure_known_cli_tokens, load_config, resolve_simulator_path, validate_config
 from diagnostics import diag_log
 from plot_trajectories import plot_trajectory_file
 
@@ -442,6 +442,8 @@ def main():
     else:
         config = load_config(args.config, overrides)
     validate_config(config)
+    if config.env.launch_sim == "exe":
+        config.env.sim_path = resolve_simulator_path(config.env.sim_path)
 
     checkpoint_path = resolve_checkpoint(run_dir, args.checkpoint)
     if run_dir is None:

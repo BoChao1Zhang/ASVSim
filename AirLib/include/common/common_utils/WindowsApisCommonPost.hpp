@@ -8,5 +8,4 @@
 #pragma warning(pop)
 #include "Windows/HideWindowsPlatformAtomics.h"
 #include "Windows/HideWindowsPlatformTypes.h"
-#include "Windows/PostWindowsApi.h"
 #endif
