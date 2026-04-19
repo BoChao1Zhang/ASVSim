@@ -88,6 +88,7 @@ class PCGVesselEnv(gym.Env):
         self.min_obstacle_distance = 999.0
         self.cross_track_error = 0.0
         self.prev_reward_state = None
+        self.episode_start_time = None
         self.current_obstacles = []
         self.episode_trajectory = []
         self.episode_path_length = 0.0
@@ -490,11 +491,18 @@ class PCGVesselEnv(gym.Env):
     def _build_reward_state(self, goal_reached=False):
         dx = float(self.state["distance_to_goal_x"])
         dy = float(self.state["distance_to_goal_y"])
+        episode_start_time = getattr(self, "episode_start_time", None)
+        elapsed_time = 0.0 if episode_start_time is None else max(0.0, float(time.time() - episode_start_time))
         return {
             "distance_to_goal": float(math.sqrt(dx**2 + dy**2)),
             "heading_error": float(self.state.get("heading_error", 0.0)),
             "min_obstacle_distance": float(self.min_obstacle_distance),
             "cross_track_error": float(self.cross_track_error),
+            "dt": float(self.step_sleep) * float(self.action_repeat),
+            "v_surge": float(self.state.get("v_surge", 0.0)),
+            "v_los": float(self.state.get("v_los", 0.0)),
+            "speed": float(self.state.get("speed", 0.0)),
+            "elapsed_time": elapsed_time,
             "collision": bool(self.state["collision"]),
             "goal_reached": bool(goal_reached),
         }
@@ -1015,6 +1023,7 @@ class PCGVesselEnv(gym.Env):
         dist_to_final = np.sqrt((final_wp[0] - pos_x)**2 + (final_wp[1] - pos_y)**2)
         self.initial_final_goal_distance = dist_to_final
         self._next_distance_milestone = (int(dist_to_final) // 20) * 20
+        self.episode_start_time = time.time()
         self.prev_reward_state = self._build_reward_state(goal_reached=False)
         self.episode_trajectory = [self.state["position"][:2].copy()]
         for _ in range(self.n_stack):
