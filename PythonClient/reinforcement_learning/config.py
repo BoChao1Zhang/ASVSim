@@ -164,13 +164,44 @@ def _normalize_override(override: str) -> str:
     return override
 
 
+def _iter_config_chain(config_path: Path):
+    current = config_path.resolve()
+    seen: set[Path] = set()
+    while current not in seen:
+        seen.add(current)
+        yield current
+
+        loaded = OmegaConf.load(current)
+        if loaded is None:
+            return
+        if not isinstance(loaded, DictConfig):
+            loaded = OmegaConf.create(loaded)
+        plain = _to_plain_object(loaded)
+        extends = plain.get("extends")
+        if extends is None:
+            return
+        current = (current.parent / extends).resolve()
+
+
+def _resolve_curriculum_path(config_path: Path, curriculum_file: str | Path) -> Path | None:
+    requested = Path(curriculum_file)
+    if requested.is_absolute():
+        return requested if requested.exists() else None
+
+    for source_path in _iter_config_chain(config_path):
+        candidate = (source_path.parent / requested).resolve()
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def _merge_curriculum_file(config: DictConfig, config_path: Path) -> DictConfig:
     curriculum_file = config.curriculum.file
     if not curriculum_file:
         return config
 
-    curriculum_path = (config_path.parent / curriculum_file).resolve()
-    if not curriculum_path.exists():
+    curriculum_path = _resolve_curriculum_path(config_path, curriculum_file)
+    if curriculum_path is None:
         return config
     curriculum_cfg = OmegaConf.load(curriculum_path)
     if curriculum_cfg is None:
@@ -226,6 +257,8 @@ def validate_config(config) -> None:
         raise ValueError("reward.stall_speed_threshold must be >= 0.0")
     if float(config.reward.stall_warmup_seconds) < 0.0:
         raise ValueError("reward.stall_warmup_seconds must be >= 0.0")
+    if bool(config.curriculum.enabled) and len(config.curriculum.stages) == 0:
+        raise ValueError("curriculum.enabled requires at least one stage; got zero stages")
     for index, stage in enumerate(config.curriculum.stages):
         if int(stage.num_dynamic_obstacles) != 0:
             raise ValueError(

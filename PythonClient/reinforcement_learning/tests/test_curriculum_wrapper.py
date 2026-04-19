@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 
@@ -5,7 +8,7 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from airgym.wrappers.curriculum import CurriculumWrapper
-from config import DEFAULT_CONFIG, load_config
+from config import DEFAULT_CONFIG, load_config, validate_config
 
 
 class _FakeEnv(gym.Env):
@@ -43,6 +46,32 @@ class CurriculumWrapperTests(unittest.TestCase):
         self.assertEqual(first_stage.num_waypoints, 1)
         self.assertEqual(first_stage.length, 4)
         self.assertEqual(list(first_stage.angle_range), [-10.0, 10.0])
+
+    def test_child_config_in_another_directory_still_loads_warmup_stage(self):
+        with TemporaryDirectory() as temp_dir:
+            child_dir = Path(temp_dir) / "child_configs"
+            child_dir.mkdir()
+            child_config = child_dir / "child.yaml"
+            relative_base = Path(os.path.relpath(DEFAULT_CONFIG.with_name("base.yaml"), child_dir))
+            child_config.write_text(
+                f"extends: {relative_base.as_posix()}\n"
+                "train:\n"
+                "  total_timesteps: 123\n",
+                encoding="utf-8",
+            )
+
+            config = load_config(child_config)
+
+        self.assertTrue(config.curriculum.enabled)
+        self.assertGreater(len(config.curriculum.stages), 0)
+        self.assertEqual(config.curriculum.stages[0].name, "stage_0_warmup")
+
+    def test_validate_config_rejects_enabled_curriculum_without_stages(self):
+        config = load_config(DEFAULT_CONFIG)
+        config.curriculum.stages = []
+
+        with self.assertRaisesRegex(ValueError, "curriculum.enabled.*zero stages|no stages|at least one stage"):
+            validate_config(config)
 
     def test_terminal_episode_preserves_stage_before_promotion(self):
         curriculum_config = SimpleNamespace(
