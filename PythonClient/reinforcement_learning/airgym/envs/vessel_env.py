@@ -57,7 +57,7 @@ class PCGVesselEnv(gym.Env):
         lidar_noise_sigma=0.0,
         heading_noise_sigma=0.0,
         waypoint_radius=10.0,
-        yaw_angle_scale=0.6,
+        yaw_angle_scale=0.25,
     ):
         super().__init__()
 
