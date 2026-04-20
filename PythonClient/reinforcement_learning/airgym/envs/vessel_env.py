@@ -180,6 +180,7 @@ class PCGVesselEnv(gym.Env):
             "num_obstacles",
             "num_dynamic_obstacles",
             "goal_distance",
+            "max_timesteps",
             "terrain_length",
             "angle_range",
             "terrain_seed",
@@ -209,6 +210,8 @@ class PCGVesselEnv(gym.Env):
         for key, value in self._next_episode_params.items():
             if key == "goal_distance":
                 self.goal_distance = int(value)
+            elif key == "max_timesteps":
+                self.max_timesteps = int(value)
             elif key == "num_obstacles":
                 self.num_obstacles = int(value)
             elif key == "num_dynamic_obstacles":

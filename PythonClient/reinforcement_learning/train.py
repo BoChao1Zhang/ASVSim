@@ -22,6 +22,8 @@ from config import (
     ensure_known_cli_tokens,
     load_config,
     make_run_dir,
+    resolve_env_max_timesteps,
+    resolve_env_step_limit,
     resolve_simulator_path,
     save_resolved_config,
     validate_config,
@@ -230,7 +232,7 @@ def set_global_seed(seed: int, torch_deterministic: bool = True) -> None:
 
 def make_env(config):
     def _init():
-        max_timesteps = max(1, int(config.env.max_timesteps) // int(config.env.action_repeat))
+        max_timesteps = resolve_env_step_limit(config.env)
         env = PCGVesselEnv(
             ip_address=config.env.ip_address,
             terrain_regen_interval=int(config.env.terrain_regen_interval),
@@ -257,7 +259,15 @@ def make_env(config):
             yaw_angle_scale=float(config.env.yaw_angle_scale),
         )
         if bool(config.curriculum.enabled):
-            env = CurriculumWrapper(env, config.curriculum, base_seed=int(config.train.seed))
+            env = CurriculumWrapper(
+                env,
+                config.curriculum,
+                base_seed=int(config.train.seed),
+                max_timesteps_override=config.env.max_timesteps,
+                first_waypoint_max_timesteps=int(config.env.first_waypoint_max_timesteps),
+                additional_waypoint_max_timesteps=int(config.env.additional_waypoint_max_timesteps),
+                action_repeat=int(config.env.action_repeat),
+            )
         return Monitor(env)
 
     return _init
@@ -352,7 +362,7 @@ def main():
         launch_sim=str(config.env.launch_sim),
         curriculum_enabled=bool(config.curriculum.enabled),
         action_repeat=int(config.env.action_repeat),
-        max_timesteps=int(config.env.max_timesteps),
+        max_timesteps=resolve_env_max_timesteps(config.env),
         step_sleep=float(config.env.step_sleep),
     )
 

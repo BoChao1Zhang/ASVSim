@@ -14,7 +14,14 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from airgym.envs.vessel_env import PCGVesselEnv
-from config import DEFAULT_CONFIG, ensure_known_cli_tokens, load_config, resolve_simulator_path, validate_config
+from config import (
+    DEFAULT_CONFIG,
+    ensure_known_cli_tokens,
+    load_config,
+    resolve_env_step_limit,
+    resolve_simulator_path,
+    validate_config,
+)
 from diagnostics import diag_log
 from plot_trajectories import plot_trajectory_file
 
@@ -129,7 +136,7 @@ def stop_simulator(proc):
 
 def make_env(config):
     def _init():
-        max_timesteps = max(1, int(config.env.max_timesteps) // int(config.env.action_repeat))
+        max_timesteps = resolve_env_step_limit(config.env)
         env = PCGVesselEnv(
             ip_address=config.env.ip_address,
             terrain_regen_interval=int(config.env.terrain_regen_interval),
@@ -361,6 +368,7 @@ def run_eval_suite(
                         num_obstacles=stage["num_obstacles"],
                         num_dynamic_obstacles=stage["num_dynamic_obstacles"],
                         goal_distance=stage["num_waypoints"],
+                        max_timesteps=resolve_env_step_limit(config.env, num_waypoints=stage["num_waypoints"]),
                         terrain_length=stage["length"],
                         angle_range=list(stage["angle_range"]),
                         terrain_seed=terrain_seed,

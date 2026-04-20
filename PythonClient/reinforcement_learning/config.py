@@ -42,7 +42,9 @@ class EnvConfig:
     angle_range: list[float] = field(default_factory=lambda: [-45.0, 45.0])
     terrain_min_width_cm: float = 5000.0
     terrain_max_width_cm: float = 10000.0
-    max_timesteps: int = 800
+    max_timesteps: int | None = None
+    first_waypoint_max_timesteps: int = 1200
+    additional_waypoint_max_timesteps: int = 800
     step_sleep: float = 0.25
     action_repeat: int = 1
     sim_path: str = "Blocks/Blocks.exe"
@@ -195,11 +197,59 @@ def load_config(config_path: str | Path, overrides: Sequence[str] | None = None)
     return merged
 
 
+def derive_episode_max_timesteps(
+    num_waypoints: int,
+    first_waypoint_max_timesteps: int,
+    additional_waypoint_max_timesteps: int,
+) -> int:
+    return max(
+        1,
+        int(first_waypoint_max_timesteps) + max(0, int(num_waypoints) - 1) * int(additional_waypoint_max_timesteps),
+    )
+
+
+def resolve_episode_max_timesteps(
+    max_timesteps: int | None,
+    num_waypoints: int,
+    first_waypoint_max_timesteps: int,
+    additional_waypoint_max_timesteps: int,
+) -> int:
+    if max_timesteps is not None:
+        return max(1, int(max_timesteps))
+    return derive_episode_max_timesteps(
+        num_waypoints=num_waypoints,
+        first_waypoint_max_timesteps=first_waypoint_max_timesteps,
+        additional_waypoint_max_timesteps=additional_waypoint_max_timesteps,
+    )
+
+
+def resolve_env_max_timesteps(env_config, num_waypoints: int | None = None) -> int:
+    effective_num_waypoints = int(env_config.num_waypoints if num_waypoints is None else num_waypoints)
+    return resolve_episode_max_timesteps(
+        max_timesteps=env_config.max_timesteps,
+        num_waypoints=effective_num_waypoints,
+        first_waypoint_max_timesteps=int(env_config.first_waypoint_max_timesteps),
+        additional_waypoint_max_timesteps=int(env_config.additional_waypoint_max_timesteps),
+    )
+
+
+def resolve_env_step_limit(env_config, num_waypoints: int | None = None) -> int:
+    max_timesteps = resolve_env_max_timesteps(env_config, num_waypoints=num_waypoints)
+    action_repeat = int(getattr(env_config, "action_repeat", 1))
+    return max(1, int(max_timesteps) // action_repeat)
+
+
 def validate_config(config) -> None:
     if int(config.env.action_repeat) < 1:
         raise ValueError("env.action_repeat must be >= 1")
     if int(config.env.num_waypoints) < 1:
         raise ValueError("env.num_waypoints must be >= 1")
+    if config.env.max_timesteps is not None and int(config.env.max_timesteps) < 1:
+        raise ValueError("env.max_timesteps must be >= 1 when explicitly set")
+    if int(config.env.first_waypoint_max_timesteps) < 1:
+        raise ValueError("env.first_waypoint_max_timesteps must be >= 1")
+    if int(config.env.additional_waypoint_max_timesteps) < 0:
+        raise ValueError("env.additional_waypoint_max_timesteps must be >= 0")
     if int(config.env.n_stack) < 1:
         raise ValueError("env.n_stack must be >= 1")
     if len(config.env.angle_range) != 2:

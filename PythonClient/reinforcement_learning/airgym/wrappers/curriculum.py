@@ -3,14 +3,28 @@ from __future__ import annotations
 from collections import deque
 
 import gymnasium as gym
+from config import resolve_episode_max_timesteps
 from diagnostics import diag_log
 
 
 class CurriculumWrapper(gym.Wrapper):
-    def __init__(self, env, curriculum_config, base_seed: int = 0):
+    def __init__(
+        self,
+        env,
+        curriculum_config,
+        base_seed: int = 0,
+        max_timesteps_override: int | None = None,
+        first_waypoint_max_timesteps: int = 1200,
+        additional_waypoint_max_timesteps: int = 800,
+        action_repeat: int = 1,
+    ):
         super().__init__(env)
         self.curriculum_config = curriculum_config
         self.base_seed = int(base_seed)
+        self.max_timesteps_override = None if max_timesteps_override is None else int(max_timesteps_override)
+        self.first_waypoint_max_timesteps = int(first_waypoint_max_timesteps)
+        self.additional_waypoint_max_timesteps = int(additional_waypoint_max_timesteps)
+        self.action_repeat = int(action_repeat)
         self.stage_index = 0
         self._episode_counter = 0
         self._history = deque(maxlen=int(curriculum_config.promote_window))
@@ -26,6 +40,16 @@ class CurriculumWrapper(gym.Wrapper):
     def _schedule_next_episode(self):
         stage = self.current_stage
         episode_seed = self.base_seed + self.stage_index * 100_000 + self._episode_counter
+        stage_max_timesteps = max(
+            1,
+            resolve_episode_max_timesteps(
+                max_timesteps=self.max_timesteps_override,
+                num_waypoints=int(stage.num_waypoints),
+                first_waypoint_max_timesteps=self.first_waypoint_max_timesteps,
+                additional_waypoint_max_timesteps=self.additional_waypoint_max_timesteps,
+            )
+            // self.action_repeat,
+        )
         diag_log(
             "curriculum_schedule_next_episode",
             stage_index=self.stage_index,
@@ -34,12 +58,14 @@ class CurriculumWrapper(gym.Wrapper):
             episode_seed=episode_seed,
             num_obstacles=int(stage.num_obstacles),
             num_waypoints=int(stage.num_waypoints),
+            max_timesteps=stage_max_timesteps,
             length=int(stage.length),
         )
         self.env.set_next_episode_params(
             num_obstacles=int(stage.num_obstacles),
             num_dynamic_obstacles=int(stage.num_dynamic_obstacles),
             goal_distance=int(stage.num_waypoints),
+            max_timesteps=stage_max_timesteps,
             terrain_length=int(stage.length),
             angle_range=[float(stage.angle_range[0]), float(stage.angle_range[1])],
             terrain_seed=episode_seed,

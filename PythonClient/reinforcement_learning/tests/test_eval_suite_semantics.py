@@ -58,6 +58,12 @@ class _FakeModel:
 class EvalSuiteSemanticsTests(unittest.TestCase):
     def test_run_eval_suite_reseeds_vec_env_for_each_seed_group(self):
         config = SimpleNamespace(
+            env=SimpleNamespace(
+                max_timesteps=None,
+                num_waypoints=1,
+                first_waypoint_max_timesteps=1200,
+                additional_waypoint_max_timesteps=800,
+            ),
             train=SimpleNamespace(
                 seed=43,
                 full_eval_seeds=2,
@@ -99,6 +105,7 @@ class EvalSuiteSemanticsTests(unittest.TestCase):
         self.assertEqual(fake_env.seed_calls, [43, 44])
         self.assertEqual(fake_env.reset_calls, 4)
         self.assertTrue(fake_env.closed)
+        self.assertEqual(fake_env.envs[0].episode_params[0]["max_timesteps"], 1200)
 
     def test_summarise_results_includes_sim_crash_rate(self):
         results_df = pd.DataFrame(

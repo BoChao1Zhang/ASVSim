@@ -51,7 +51,16 @@ class CurriculumWrapperTests(unittest.TestCase):
             ],
         )
         env = _FakeEnv()
-        wrapper = CurriculumWrapper(env, curriculum_config, base_seed=11)
+        wrapper = CurriculumWrapper(
+            env,
+            curriculum_config,
+            base_seed=11,
+            max_timesteps_override=None,
+            first_waypoint_max_timesteps=1200,
+            additional_waypoint_max_timesteps=800,
+        )
+
+        self.assertEqual(env.scheduled_params[0]["max_timesteps"], 1200)
 
         wrapper.reset()
         _, _, terminated, truncated, info = wrapper.step(0)
@@ -65,6 +74,7 @@ class CurriculumWrapperTests(unittest.TestCase):
         self.assertEqual(info["episode_stage_after_promotion"], 1)
         self.assertEqual(wrapper.stage_index, 1)
         self.assertEqual(env.scheduled_params[-1]["num_obstacles"], 2)
+        self.assertEqual(env.scheduled_params[-1]["max_timesteps"], 2000)
 
 
 if __name__ == "__main__":
