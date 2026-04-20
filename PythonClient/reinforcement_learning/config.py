@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -73,8 +74,8 @@ class AlgoConfig:
     learning_starts: int = 5_000
     train_freq: int = 1
     stats_window_size: int = 10
-    net_arch: list[int] = field(default_factory=lambda: [512, 512])
-    device: str = "cpu"
+    net_arch: Any = field(default_factory=lambda: {"pi": [256, 256], "qf": [2048, 2048]})
+    device: str = "cuda"
     norm_obs: bool = True
     norm_reward: bool = True
     clip_obs: float = 10.0
@@ -284,6 +285,26 @@ def load_config(config_path: str | Path, overrides: Sequence[str] | None = None)
 
 
 def validate_config(config) -> None:
+    net_arch = config.algo.net_arch
+    if isinstance(net_arch, Mapping):
+        missing_keys = {"pi", "qf"} - set(net_arch.keys())
+        extra_keys = set(net_arch.keys()) - {"pi", "qf"}
+        if missing_keys or extra_keys:
+            raise ValueError(
+                "algo.net_arch dict must contain exactly the keys {'pi', 'qf'}; "
+                f"missing={sorted(missing_keys)}, extra={sorted(extra_keys)}"
+            )
+        arch_sections = {"pi": net_arch["pi"], "qf": net_arch["qf"]}
+    else:
+        arch_sections = {"shared": net_arch}
+
+    for label, layers in arch_sections.items():
+        if not isinstance(layers, Sequence) or isinstance(layers, (str, bytes)):
+            raise ValueError(f"algo.net_arch[{label}] must be a sequence of positive layer sizes")
+        for index, width in enumerate(layers):
+            if int(width) < 1:
+                raise ValueError(f"algo.net_arch[{label}][{index}] must be >= 1")
+
     if int(config.env.observation_schema_version) != OBSERVATION_SCHEMA_VERSION:
         raise ValueError(
             "env.observation_schema_version="

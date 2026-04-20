@@ -36,6 +36,13 @@ class CurriculumWrapperTests(unittest.TestCase):
 
         self.assertTrue(config.curriculum.enabled)
 
+    def test_default_config_uses_split_crossq_architecture_on_cuda(self):
+        config = load_config(DEFAULT_CONFIG)
+
+        self.assertEqual(config.algo.device, "cuda")
+        self.assertEqual(list(config.algo.net_arch.pi), [256, 256])
+        self.assertEqual(list(config.algo.net_arch.qf), [2048, 2048])
+
     def test_default_config_starts_with_warmup_stage(self):
         config = load_config(DEFAULT_CONFIG)
         first_stage = config.curriculum.stages[0]

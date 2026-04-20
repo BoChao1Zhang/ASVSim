@@ -126,5 +126,33 @@ class EvalSuiteCallbackTests(unittest.TestCase):
         self.assertEqual(callback.next_eval, 200)
 
 
+class CreateModelTests(unittest.TestCase):
+    def test_create_model_preserves_split_actor_critic_architecture(self):
+        config = SimpleNamespace(
+            algo=SimpleNamespace(
+                name="crossq",
+                policy="MlpPolicy",
+                learning_rate=3e-4,
+                gamma=0.99,
+                batch_size=256,
+                buffer_size=500000,
+                learning_starts=5000,
+                train_freq=1,
+                stats_window_size=10,
+                device="cuda",
+                net_arch={"pi": [256, 256], "qf": [2048, 2048]},
+            ),
+            train=SimpleNamespace(seed=43),
+        )
+
+        with mock.patch.object(train, "CrossQ", return_value="fake-model") as crossq_ctor:
+            model = train.create_model(config, env=object(), tensorboard_dir=Path("tb"))
+
+        self.assertEqual(model, "fake-model")
+        kwargs = crossq_ctor.call_args.kwargs
+        self.assertEqual(kwargs["device"], "cuda")
+        self.assertEqual(kwargs["policy_kwargs"]["net_arch"], {"pi": [256, 256], "qf": [2048, 2048]})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -9,8 +9,10 @@ algo:
   learning_starts: 5000
   train_freq: 1
   stats_window_size: 10
-  net_arch: [512, 512]
-  device: cpu
+  net_arch:
+    pi: [256, 256]
+    qf: [2048, 2048]
+  device: cuda
 
 train:
   total_timesteps: 2500000

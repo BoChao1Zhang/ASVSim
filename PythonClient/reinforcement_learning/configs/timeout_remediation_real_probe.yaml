@@ -1,0 +1,22 @@
+extends: crossq.yaml
+
+env:
+  launch_sim: exe
+  sim_path: E:/code/ASVSim/Unreal/Environments/PortEnv/Saved/StagedBuilds/Windows/Blocks.exe
+  sim_wait: 30
+  action_repeat: 1
+  max_timesteps: 180
+
+algo:
+  batch_size: 64
+  learning_starts: 128
+
+train:
+  total_timesteps: 1200
+  eval_freq: 0
+  subset_eval_seeds: 1
+  subset_eval_episodes: 1
+  full_eval_seeds: 1
+  full_eval_episodes: 1
+  run_root: E:/code/ASVSim/data/reinforcement_learning/runs
+  sim_log: true

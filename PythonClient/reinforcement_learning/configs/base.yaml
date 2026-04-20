@@ -20,7 +20,7 @@ env:
   heading_noise_sigma: 0.0
   waypoint_radius: 10.0
   observation_schema_version: 2
-  yaw_angle_scale: 0.6
+  yaw_angle_scale: 0.25
 
 reward:
   progress: 1.0
@@ -48,8 +48,10 @@ algo:
   learning_starts: 5000
   train_freq: 1
   stats_window_size: 10
-  net_arch: [512, 512]
-  device: cpu
+  net_arch:
+    pi: [256, 256]
+    qf: [2048, 2048]
+  device: cuda
   norm_obs: true
   norm_reward: true
   clip_obs: 10.0

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 from sb3_contrib import CrossQ
+from omegaconf import OmegaConf
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
@@ -310,6 +311,9 @@ def create_model(config, env, tensorboard_dir: Path):
     if algo_name != "crossq":
         raise ValueError(f"Unsupported algorithm: {config.algo.name}")
 
+    net_arch = config.algo.net_arch
+    if OmegaConf.is_config(net_arch):
+        net_arch = OmegaConf.to_container(net_arch, resolve=True)
     return CrossQ(
         config.algo.policy,
         env,
@@ -324,7 +328,7 @@ def create_model(config, env, tensorboard_dir: Path):
         seed=int(config.train.seed),
         device=config.algo.device,
         tensorboard_log=str(tensorboard_dir),
-        policy_kwargs=dict(net_arch=list(config.algo.net_arch)),
+        policy_kwargs=dict(net_arch=net_arch),
     )
 
 

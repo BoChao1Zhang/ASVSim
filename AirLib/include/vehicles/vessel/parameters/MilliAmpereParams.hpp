@@ -61,8 +61,8 @@ namespace msr {
 
             virtual void initializeRudders() {
                 auto& params = getParams();
-                params.rudder_params.emplace_back(2.0, 0.5, 500, M_PI, -1.8, 0.0);
-                params.rudder_params.emplace_back(2.0, 0.5, 500, M_PI, 1.8, 0.0);
+                params.rudder_params.emplace_back(2.0, 1.25, 500, M_PI, -1.8, 0.0);
+                params.rudder_params.emplace_back(2.0, 1.25, 500, M_PI, 1.8, 0.0);
             }
         };
 
