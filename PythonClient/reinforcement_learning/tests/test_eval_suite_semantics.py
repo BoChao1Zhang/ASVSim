@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 
 import eval_suite
+from airgym.envs.vessel_env import PCGVesselEnv
+from config import OBSERVATION_SCHEMA_VERSION
 
 
 class _FakeBaseEnv:
@@ -35,8 +37,9 @@ class _FakeVecEnv:
     def step(self, action):
         info = {
             "end_reason": "goal_reached",
-            "distance_to_goal_x": 0.0,
-            "distance_to_goal_y": 0.0,
+            "distance_to_final_goal": 9.0,
+            "distance_to_goal_x": 3.0,
+            "distance_to_goal_y": 4.0,
             "path_length_ratio": 1.0,
         }
         return (
@@ -56,6 +59,53 @@ class _FakeModel:
 
 
 class EvalSuiteSemanticsTests(unittest.TestCase):
+    def test_pcg_vessel_env_sim_crash_uses_last_known_distances(self):
+        env = PCGVesselEnv.__new__(PCGVesselEnv)
+        env.sim_launch_mode = "exe"
+        env.single_obs_size = 54
+        env.n_stack = 1
+        env.episode_count = 11
+        env.timestep = 3
+        env._restart_sim = lambda: None
+        env._step_inner = mock.Mock(side_effect=RuntimeError("sim blew up"))
+        env.state = {
+            "vessel_state": object(),
+            "distance_to_final_goal": 17.5,
+            "distance_to_current_wp": 4.25,
+            "v_surge": 0.6,
+            "v_los": 0.4,
+            "speed": 0.8,
+        }
+
+        _, _, terminated, truncated, info = env.step(np.array([0.0, 0.0], dtype=np.float32))
+
+        self.assertFalse(terminated)
+        self.assertTrue(truncated)
+        self.assertEqual(info["end_reason"], "sim_crash")
+        self.assertAlmostEqual(info["distance_to_final_goal"], 17.5)
+        self.assertAlmostEqual(info["distance_to_current_wp"], 4.25)
+
+    def test_pcg_vessel_env_sim_crash_uses_nan_without_last_known_distances(self):
+        env = PCGVesselEnv.__new__(PCGVesselEnv)
+        env.sim_launch_mode = "exe"
+        env.single_obs_size = 54
+        env.n_stack = 1
+        env.episode_count = 12
+        env.timestep = 0
+        env._restart_sim = lambda: None
+        env._step_inner = mock.Mock(side_effect=RuntimeError("sim blew up"))
+        env.state = {
+            "vessel_state": None,
+        }
+
+        _, _, terminated, truncated, info = env.step(np.array([0.0, 0.0], dtype=np.float32))
+
+        self.assertFalse(terminated)
+        self.assertTrue(truncated)
+        self.assertEqual(info["end_reason"], "sim_crash")
+        self.assertTrue(np.isnan(info["distance_to_final_goal"]))
+        self.assertTrue(np.isnan(info["distance_to_current_wp"]))
+
     def test_run_eval_suite_reseeds_vec_env_for_each_seed_group(self):
         config = SimpleNamespace(
             env=SimpleNamespace(
@@ -91,7 +141,7 @@ class EvalSuiteSemanticsTests(unittest.TestCase):
                 mock.patch.object(eval_suite, "build_stage_specs", return_value=stages),
                 mock.patch.object(eval_suite, "dump_trajectory"),
             ):
-                eval_suite.run_eval_suite(
+                results = eval_suite.run_eval_suite(
                     config=config,
                     run_dir=run_dir,
                     model=fake_model,
@@ -101,6 +151,7 @@ class EvalSuiteSemanticsTests(unittest.TestCase):
                     episodes_per_seed=2,
                     deterministic=True,
                 )
+                self.assertTrue((results["results"]["final_dist"] == 9.0).all())
 
         self.assertEqual(fake_env.seed_calls, [43, 44])
         self.assertEqual(fake_env.reset_calls, 4)
@@ -147,6 +198,25 @@ class EvalSuiteSemanticsTests(unittest.TestCase):
         base_row = stage_summary.loc[stage_summary["stage"] == "base"].iloc[0]
         self.assertAlmostEqual(base_row["sim_crash_rate"], 0.5)
         self.assertAlmostEqual(overall["sim_crash_rate"], 0.25)
+
+    def test_eval_suite_rejects_run_config_without_observation_schema_version(self):
+        with TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir)
+            (run_dir / "config.yaml").write_text("env:\n  yaw_angle_scale: 0.6\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "missing env\\.observation_schema_version"):
+                eval_suite.require_supported_observation_schema(run_dir)
+
+    def test_eval_suite_rejects_run_config_with_mismatched_observation_schema_version(self):
+        with TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir)
+            (run_dir / "config.yaml").write_text("env:\n  observation_schema_version: 1\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                ValueError,
+                rf"observation_schema_version=1.*expected {OBSERVATION_SCHEMA_VERSION}",
+            ):
+                eval_suite.require_supported_observation_schema(run_dir)
 
 
 if __name__ == "__main__":

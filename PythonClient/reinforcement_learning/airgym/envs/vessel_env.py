@@ -17,6 +17,19 @@ from airgym.envs.reward import RewardComputer
 from diagnostics import diag_log
 
 
+def world_velocity_to_body_frame(world_velocity_x, world_velocity_y, heading):
+    surge = world_velocity_x * math.cos(heading) + world_velocity_y * math.sin(heading)
+    sway = -world_velocity_x * math.sin(heading) + world_velocity_y * math.cos(heading)
+    return float(surge), float(sway)
+
+
+def project_velocity_onto_los(world_velocity_x, world_velocity_y, los_dx, los_dy):
+    los_norm = math.hypot(los_dx, los_dy)
+    if los_norm <= 1e-9:
+        return 0.0
+    return float((world_velocity_x * los_dx + world_velocity_y * los_dy) / los_norm)
+
+
 class PCGVesselEnv(gym.Env):
     """Gymnasium environment for vessel RL training with PCG terrain randomization."""
 
@@ -88,6 +101,7 @@ class PCGVesselEnv(gym.Env):
         self.min_obstacle_distance = 999.0
         self.cross_track_error = 0.0
         self.prev_reward_state = None
+        self.episode_start_time = None
         self.current_obstacles = []
         self.episode_trajectory = []
         self.episode_path_length = 0.0
@@ -126,9 +140,14 @@ class PCGVesselEnv(gym.Env):
             "success": False,
             "distance_to_goal_x": 0.0,
             "distance_to_goal_y": 0.0,
+            "distance_to_current_wp": 0.0,
+            "distance_to_final_goal": 0.0,
             "heading": 0.0,
             "heading_error": 0.0,
             "cross_track_error": 0.0,
+            "v_surge": 0.0,
+            "v_los": 0.0,
+            "speed": 0.0,
         }
 
 
@@ -488,13 +507,58 @@ class PCGVesselEnv(gym.Env):
     def _build_reward_state(self, goal_reached=False):
         dx = float(self.state["distance_to_goal_x"])
         dy = float(self.state["distance_to_goal_y"])
+        dt = float(self.step_sleep) * float(self.action_repeat)
+        elapsed_time = max(0.0, float(getattr(self, "timestep", 0))) * dt
         return {
             "distance_to_goal": float(math.sqrt(dx**2 + dy**2)),
             "heading_error": float(self.state.get("heading_error", 0.0)),
             "min_obstacle_distance": float(self.min_obstacle_distance),
             "cross_track_error": float(self.cross_track_error),
+            "dt": dt,
+            "v_surge": float(self.state.get("v_surge", 0.0)),
+            "v_los": float(self.state.get("v_los", 0.0)),
+            "speed": float(self.state.get("speed", 0.0)),
+            "elapsed_time": elapsed_time,
             "collision": bool(self.state["collision"]),
             "goal_reached": bool(goal_reached),
+        }
+
+    def _compute_motion_diagnostics(self, linear_velocity_x, linear_velocity_y, heading, goal_angle):
+        v_surge, _ = world_velocity_to_body_frame(linear_velocity_x, linear_velocity_y, heading)
+        v_los = project_velocity_onto_los(
+            linear_velocity_x,
+            linear_velocity_y,
+            math.cos(goal_angle),
+            math.sin(goal_angle),
+        )
+        speed = float(math.sqrt(linear_velocity_x**2 + linear_velocity_y**2))
+        return v_surge, v_los, speed
+
+    def _get_last_known_state_scalar(self, key):
+        value = getattr(self, "state", {}).get(key, math.nan)
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return float("nan")
+        return value if math.isfinite(value) else float("nan")
+
+    def _build_sim_crash_info(self):
+        return {
+            "reward": 0.0,
+            "reward_components": {},
+            "thrust": 0.0,
+            "yaw_cmd": 0.0,
+            "distance_to_final_goal": self._get_last_known_state_scalar("distance_to_final_goal"),
+            "distance_to_current_wp": self._get_last_known_state_scalar("distance_to_current_wp"),
+            "v_surge": self._get_last_known_state_scalar("v_surge"),
+            "v_los": self._get_last_known_state_scalar("v_los"),
+            "speed": self._get_last_known_state_scalar("speed"),
+            "success": 0,
+            "collision": 0,
+            "episode_num": self.episode_count,
+            "end_reason": "sim_crash",
+            "waypoints_reached": 0,
+            "path_length_ratio": 0.0,
         }
 
     def _retarget_current_waypoint(self):
@@ -655,6 +719,10 @@ class PCGVesselEnv(gym.Env):
         # Scalar distances to current and next waypoints
         distance_to_curr = np.sqrt(dx_curr**2 + dy_curr**2)
         distance_to_next = np.sqrt(dx_next**2 + dy_next**2) if dx_next != 0.0 or dy_next != 0.0 else 0.0
+        final_wp = self.waypoints[-1]
+        distance_to_final = np.sqrt((final_wp[0] - pos_x)**2 + (final_wp[1] - pos_y)**2)
+        self.state["distance_to_current_wp"] = float(distance_to_curr)
+        self.state["distance_to_final_goal"] = float(distance_to_final)
 
         # Heading error to current waypoint, normalized to [-pi, pi]
         goal_angle = np.arctan2(dy_curr, dx_curr)
@@ -673,6 +741,20 @@ class PCGVesselEnv(gym.Env):
         linear_acceleration_x = vessel_state.kinematics_estimated.linear_acceleration.x_val
         linear_acceleration_y = vessel_state.kinematics_estimated.linear_acceleration.y_val
         angular_acceleration_z = vessel_state.kinematics_estimated.angular_acceleration.z_val
+        observed_body_frame_surge, observed_body_frame_sway = world_velocity_to_body_frame(
+            linear_velocity_x,
+            linear_velocity_y,
+            observed_heading,
+        )
+        v_surge, v_los, speed = self._compute_motion_diagnostics(
+            linear_velocity_x,
+            linear_velocity_y,
+            heading,
+            goal_angle,
+        )
+        self.state["v_surge"] = v_surge
+        self.state["v_los"] = v_los
+        self.state["speed"] = speed
         self.cross_track_error = self._compute_cross_track_error(pos_x, pos_y)
         self.state["cross_track_error"] = self.cross_track_error
 
@@ -685,7 +767,7 @@ class PCGVesselEnv(gym.Env):
                 distance_to_next,
                 observed_heading_error,
                 np.sin(observed_heading), np.cos(observed_heading),
-                linear_velocity_x, linear_velocity_y,
+                observed_body_frame_surge, observed_body_frame_sway,
                 linear_acceleration_x, linear_acceleration_y,
                 angular_acceleration_z,
             ]),
@@ -780,20 +862,7 @@ class PCGVesselEnv(gym.Env):
             if self.sim_launch_mode == "exe":
                 self._restart_sim()
                 obs = np.zeros(self.single_obs_size * self.n_stack, dtype=np.float32)
-                info = {
-                    "reward": 0.0,
-                    "reward_components": {},
-                    "thrust": 0.0,
-                    "yaw_cmd": 0.0,
-                    "distance_to_goal_x": 0.0,
-                    "distance_to_goal_y": 0.0,
-                    "success": 0,
-                    "collision": 0,
-                    "episode_num": self.episode_count,
-                    "end_reason": "sim_crash",
-                    "waypoints_reached": 0,
-                    "path_length_ratio": 0.0,
-                }
+                info = self._build_sim_crash_info()
                 return obs, 0.0, False, True, info
             raise RuntimeError(
                 "step() failed while attached to an external simulator/editor. "
@@ -859,8 +928,11 @@ class PCGVesselEnv(gym.Env):
             "reward_components": components,
             "thrust": action[0],
             "yaw_cmd": action[1],
-            "distance_to_goal_x": abs(final_dist_x),
-            "distance_to_goal_y": abs(final_dist_y),
+            "distance_to_final_goal": float(self.state["distance_to_final_goal"]),
+            "distance_to_current_wp": float(self.state["distance_to_current_wp"]),
+            "v_surge": float(self.state["v_surge"]),
+            "v_los": float(self.state["v_los"]),
+            "speed": float(self.state["speed"]),
             "success": int(self.state["success"]),
             "collision": int(self.state["collision"]),
             "episode_num": self.episode_count,
@@ -977,6 +1049,7 @@ class PCGVesselEnv(gym.Env):
         dist_to_final = np.sqrt((final_wp[0] - pos_x)**2 + (final_wp[1] - pos_y)**2)
         self.initial_final_goal_distance = dist_to_final
         self._next_distance_milestone = (int(dist_to_final) // 20) * 20
+        self.episode_start_time = time.time()
         self.prev_reward_state = self._build_reward_state(goal_reached=False)
         self.episode_trajectory = [self.state["position"][:2].copy()]
         for _ in range(self.n_stack):

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from omegaconf import DictConfig, OmegaConf
 from sb3_contrib import CrossQ
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
@@ -16,6 +17,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from airgym.envs.vessel_env import PCGVesselEnv
 from config import (
     DEFAULT_CONFIG,
+    OBSERVATION_SCHEMA_VERSION,
     ensure_known_cli_tokens,
     load_config,
     resolve_env_step_limit,
@@ -109,6 +111,34 @@ def resolve_checkpoint(run_dir: Path | None, checkpoint_arg: str | None) -> Path
         if candidate.exists():
             return candidate
     raise FileNotFoundError(f"No checkpoint found under {run_dir}")
+
+
+def _load_raw_run_config(run_dir: Path) -> DictConfig:
+    config_path = run_dir / "config.yaml"
+    raw_config = OmegaConf.load(config_path)
+    if raw_config is None:
+        raw_config = OmegaConf.create({})
+    if not isinstance(raw_config, DictConfig):
+        raw_config = OmegaConf.create(raw_config)
+    return raw_config
+
+
+def require_supported_observation_schema(run_dir: Path, expected_version: int = OBSERVATION_SCHEMA_VERSION) -> int:
+    raw_config = _load_raw_run_config(run_dir)
+    raw_version = OmegaConf.select(raw_config, "env.observation_schema_version", default=None)
+    if raw_version is None:
+        raise ValueError(
+            f"Run config '{run_dir / 'config.yaml'}' is missing env.observation_schema_version. "
+            f"Refusing to evaluate checkpoint under observation schema {expected_version}."
+        )
+
+    actual_version = int(raw_version)
+    if actual_version != int(expected_version):
+        raise ValueError(
+            f"Run config '{run_dir / 'config.yaml'}' has env.observation_schema_version={actual_version}, "
+            f"expected {int(expected_version)}. Refusing to evaluate checkpoint."
+        )
+    return actual_version
 
 
 def start_simulator(sim_path: str, wait: int = 10):
@@ -401,9 +431,7 @@ def run_eval_suite(
 
                     info = info[0]
                     end_reason = info.get("end_reason", "unknown")
-                    final_dist = math.sqrt(
-                        float(info.get("distance_to_goal_x", 0.0)) ** 2 + float(info.get("distance_to_goal_y", 0.0)) ** 2
-                    )
+                    final_dist = float(info.get("distance_to_final_goal", np.nan))
                     row = {
                         "stage": stage["name"],
                         "seed": seed_value,
@@ -446,6 +474,7 @@ def main():
     run_dir = resolve_run_dir(args)
 
     if run_dir is not None:
+        require_supported_observation_schema(run_dir)
         config = load_config(run_dir / "config.yaml", overrides)
     else:
         config = load_config(args.config, overrides)

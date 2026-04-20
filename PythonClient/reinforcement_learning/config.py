@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -15,6 +16,7 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 DATA_ROOT = REPO_ROOT / "data" / "reinforcement_learning"
 RUNS_ROOT = DATA_ROOT / "runs"
 DEFAULT_CONFIG = SCRIPT_DIR / "configs" / "crossq.yaml"
+OBSERVATION_SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -25,6 +27,10 @@ class RewardConfig:
     action_rate: float = 0.05
     cross_track: float = 0.2
     step_penalty: float = 0.1
+    forward_velocity: float = 0.5
+    stall_penalty: float = 0.1
+    stall_speed_threshold: float = 0.3
+    stall_warmup_seconds: float = 10.0
     terminal: float = 1.0
     terminal_collision: float = -100.0
     terminal_goal: float = 500.0
@@ -55,6 +61,7 @@ class EnvConfig:
     lidar_noise_sigma: float = 0.0
     heading_noise_sigma: float = 0.0
     waypoint_radius: float = 10.0
+    observation_schema_version: int = OBSERVATION_SCHEMA_VERSION
     yaw_angle_scale: float = 0.25
 
 
@@ -69,8 +76,8 @@ class AlgoConfig:
     learning_starts: int = 5_000
     train_freq: int = 1
     stats_window_size: int = 10
-    net_arch: list[int] = field(default_factory=lambda: [512, 512])
-    device: str = "cpu"
+    net_arch: Any = field(default_factory=lambda: {"pi": [256, 256], "qf": [2048, 2048]})
+    device: str = "cuda"
     norm_obs: bool = True
     norm_reward: bool = True
     clip_obs: float = 10.0
@@ -134,6 +141,18 @@ def _to_plain_object(config: DictConfig):
     return OmegaConf.to_container(config, resolve=False)
 
 
+def _load_plain_config(config_path: Path):
+    loaded = OmegaConf.load(config_path)
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, DictConfig):
+        loaded = OmegaConf.create(loaded)
+    plain = _to_plain_object(loaded)
+    if isinstance(plain, dict):
+        return plain
+    return {}
+
+
 def _load_config_tree(config_path: Path) -> DictConfig:
     loaded = OmegaConf.load(config_path)
     if loaded is None:
@@ -160,13 +179,74 @@ def _normalize_override(override: str) -> str:
     return override
 
 
-def _merge_curriculum_file(config: DictConfig, config_path: Path) -> DictConfig:
+def _iter_config_chain(config_path: Path):
+    current = config_path.resolve()
+    seen: set[Path] = set()
+    while current not in seen:
+        seen.add(current)
+        yield current
+
+        plain = _load_plain_config(current)
+        extends = plain.get("extends")
+        if extends is None:
+            return
+        current = (current.parent / extends).resolve()
+
+
+def _find_curriculum_file_declaration(config_path: Path) -> Path | None:
+    for source_path in _iter_config_chain(config_path):
+        plain = _load_plain_config(source_path)
+        curriculum = plain.get("curriculum")
+        if isinstance(curriculum, dict) and "file" in curriculum:
+            return source_path
+    return None
+
+
+def _resolve_curriculum_path(
+    config_path: Path,
+    curriculum_file: str | Path,
+    *,
+    prefer_leaf_config_dir: bool = False,
+) -> Path | None:
+    requested = Path(curriculum_file)
+    if requested.is_absolute():
+        return requested if requested.exists() else None
+
+    if prefer_leaf_config_dir:
+        candidate = (config_path.resolve().parent / requested).resolve()
+        if candidate.exists():
+            return candidate
+        raise FileNotFoundError(
+            "curriculum.file override was not found relative to the leaf config: "
+            f"{candidate}"
+        )
+
+    declaration_path = _find_curriculum_file_declaration(config_path)
+    if declaration_path is None:
+        declaration_path = config_path.resolve()
+
+    candidate = (declaration_path.parent / requested).resolve()
+    if candidate.exists():
+        return candidate
+    return None
+
+
+def _merge_curriculum_file(
+    config: DictConfig,
+    config_path: Path,
+    *,
+    prefer_leaf_config_dir: bool = False,
+) -> DictConfig:
     curriculum_file = config.curriculum.file
     if not curriculum_file:
         return config
 
-    curriculum_path = (config_path.parent / curriculum_file).resolve()
-    if not curriculum_path.exists():
+    curriculum_path = _resolve_curriculum_path(
+        config_path,
+        curriculum_file,
+        prefer_leaf_config_dir=prefer_leaf_config_dir,
+    )
+    if curriculum_path is None:
         return config
     curriculum_cfg = OmegaConf.load(curriculum_path)
     if curriculum_cfg is None:
@@ -187,10 +267,19 @@ def load_config(config_path: str | Path, overrides: Sequence[str] | None = None)
 
     yaml_cfg = _load_config_tree(config_file)
     merged = OmegaConf.merge(base, yaml_cfg)
-    merged = _merge_curriculum_file(merged, config_file)
 
-    if overrides:
-        override_cfg = OmegaConf.from_dotlist([_normalize_override(item) for item in overrides])
+    normalized_overrides = [_normalize_override(item) for item in overrides] if overrides else []
+    curriculum_file_overrides = [item for item in normalized_overrides if item.startswith("curriculum.file=")]
+    if curriculum_file_overrides:
+        merged = OmegaConf.merge(merged, OmegaConf.from_dotlist(curriculum_file_overrides))
+    merged = _merge_curriculum_file(
+        merged,
+        config_file,
+        prefer_leaf_config_dir=bool(curriculum_file_overrides),
+    )
+
+    if normalized_overrides:
+        override_cfg = OmegaConf.from_dotlist(normalized_overrides)
         merged = OmegaConf.merge(merged, override_cfg)
 
     OmegaConf.resolve(merged)
@@ -240,6 +329,32 @@ def resolve_env_step_limit(env_config, num_waypoints: int | None = None) -> int:
 
 
 def validate_config(config) -> None:
+    net_arch = config.algo.net_arch
+    if isinstance(net_arch, Mapping):
+        missing_keys = {"pi", "qf"} - set(net_arch.keys())
+        extra_keys = set(net_arch.keys()) - {"pi", "qf"}
+        if missing_keys or extra_keys:
+            raise ValueError(
+                "algo.net_arch dict must contain exactly the keys {'pi', 'qf'}; "
+                f"missing={sorted(missing_keys)}, extra={sorted(extra_keys)}"
+            )
+        arch_sections = {"pi": net_arch["pi"], "qf": net_arch["qf"]}
+    else:
+        arch_sections = {"shared": net_arch}
+
+    for label, layers in arch_sections.items():
+        if not isinstance(layers, Sequence) or isinstance(layers, (str, bytes)):
+            raise ValueError(f"algo.net_arch[{label}] must be a sequence of positive layer sizes")
+        for index, width in enumerate(layers):
+            if int(width) < 1:
+                raise ValueError(f"algo.net_arch[{label}][{index}] must be >= 1")
+
+    if int(config.env.observation_schema_version) != OBSERVATION_SCHEMA_VERSION:
+        raise ValueError(
+            "env.observation_schema_version="
+            f"{int(config.env.observation_schema_version)} is unsupported; "
+            f"expected {OBSERVATION_SCHEMA_VERSION}"
+        )
     if int(config.env.action_repeat) < 1:
         raise ValueError("env.action_repeat must be >= 1")
     if int(config.env.num_waypoints) < 1:
@@ -262,6 +377,16 @@ def validate_config(config) -> None:
         raise ValueError(
             "env.num_dynamic_obstacles is not supported because dynamic obstacle spawning is disabled at runtime; use 0."
         )
+    if float(config.reward.forward_velocity) < 0.0:
+        raise ValueError("reward.forward_velocity must be >= 0.0")
+    if float(config.reward.stall_penalty) < 0.0:
+        raise ValueError("reward.stall_penalty must be >= 0.0")
+    if float(config.reward.stall_speed_threshold) < 0.0:
+        raise ValueError("reward.stall_speed_threshold must be >= 0.0")
+    if float(config.reward.stall_warmup_seconds) < 0.0:
+        raise ValueError("reward.stall_warmup_seconds must be >= 0.0")
+    if bool(config.curriculum.enabled) and len(config.curriculum.stages) == 0:
+        raise ValueError("curriculum.enabled requires at least one stage; got zero stages")
     for index, stage in enumerate(config.curriculum.stages):
         if int(stage.num_dynamic_obstacles) != 0:
             raise ValueError(
