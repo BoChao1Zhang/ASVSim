@@ -3,7 +3,7 @@
 ## Introduction
 
 The vessel reinforcement learning example in this repository is implemented under `PythonClient/reinforcement_learning/`.
-It trains a local navigation policy for procedurally generated port channels: the policy receives vessel state, waypoint geometry, and LiDAR obstacle cues, then outputs continuous thrust and yaw commands.
+It trains a local navigation policy for procedurally generated port channels: the policy receives vessel state, waypoint geometry, and LiDAR obstacle cues, then outputs continuous thrust and rudder signals.
 
 The current training stack is:
 
@@ -49,8 +49,8 @@ This means the RL policy is solving a local planning and control problem on top 
 
 | Specification | Details |
 | --- | --- |
-| **Action Space** | `Box(2,)` - `[thrust, yaw_cmd]` |
-| **Action Range** | `thrust: [0.0, 1.0]`, `yaw_cmd: [-1.0, 1.0]` |
+| **Action Space** | `Box(2,)` - `[thrust, rudder_signal]` |
+| **Action Range** | `thrust: [0.0, 0.7]`, `rudder_signal: [0.4406, 0.5594]` |
 | **Observation Space** | `Box(54,)` - waypoint geometry + vessel state + LiDAR |
 | **Episode Length** | `800 / action_repeat` timesteps |
 | **Success Condition** | Reach within 10 meters of the final waypoint |
@@ -72,13 +72,13 @@ obs = [
     heading_error,
     sin_heading,
     cos_heading,
-    linear_velocity_x,
-    linear_velocity_y,
+    body_frame_surge,
+    body_frame_sway,
     linear_acceleration_x,
     linear_acceleration_y,
     angular_acceleration_z,
     prev_thrust,
-    prev_yaw_cmd,
+    prev_rudder_signal,
     lidar_sector_0,
     ...,
     lidar_sector_35,
@@ -86,6 +86,7 @@ obs = [
 ```
 
 The LiDAR observation is min-pooled into 36 sectors across 360 degrees.
+The RL environment now assumes exactly `3600` raw LiDAR points per observation step and reshapes them into `(36, 100)` before pooling. If the configured sensor does not provide that contract, the environment raises an error instead of silently adapting the point count.
 Ground and vessel labels are filtered out so the observation focuses on obstacle distances.
 
 ### Reward Structure
@@ -261,22 +262,22 @@ The RL environment assumes a vessel configuration compatible with:
         "lidar1": {
           "SensorType": 6,
           "Enabled": true,
-          "NumberOfChannels": 8,
-          "RotationsPerSecond": 1,
-          "MeasurementsPerCycle": 450,
+          "NumberOfChannels": 1,
+          "RotationsPerSecond": 10,
+          "MeasurementsPerCycle": 3600,
           "range": 100000,
           "X": 0,
           "Y": 0,
-          "Z": -8.2,
+          "Z": -3.2,
           "Roll": 0,
           "Pitch": 0,
           "Yaw": 0,
-          "VerticalFOVUpper": -2,
-          "VerticalFOVLower": -10,
+          "VerticalFOVUpper": 0,
+          "VerticalFOVLower": 0,
           "GenerateNoise": false,
           "DrawDebugPoints": false,
-          "HorizontalFOVStart": -180,
-          "HorizontalFOVEnd": 180
+          "HorizontalFOVStart": 0,
+          "HorizontalFOVEnd": 360
         },
         "Distance": {
           "SensorType": 5,
@@ -293,6 +294,8 @@ The RL environment assumes a vessel configuration compatible with:
   }
 }
 ```
+
+For RL state construction, prefer this code-backed configuration over older documentation snippets that used `MeasurementsPerCycle=450`. Those older examples do not satisfy the current observation contract.
 
 ## Python Dependencies
 

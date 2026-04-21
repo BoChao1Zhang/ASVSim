@@ -308,6 +308,9 @@ AirSim 的配置搜索顺序中，这个位置是最稳定的默认方案。
 "MeasurementsPerCycle": 3600
 ```
 
+- 当前代码按上游 code contract 处理 RL state 里的传感器采样，不再提供 Python 侧 `lidar_noise_sigma` / `heading_noise_sigma` 这类额外观测噪声开关。
+- 也就是说，state 里的 heading 与 LiDAR 读数直接使用运行时传感器输出，前提是你的 `settings.json` 已满足这里的 3600 点 LiDAR 契约。
+
 如果你的 LiDAR 配置与此不一致，`vessel_env.py` 在重排点云时就可能报错。
 
 ## 6. 启动 ASVSim 的两种方式
@@ -375,6 +378,12 @@ E:\code\ASVSim\PythonClient\reinforcement_learning\airgym\envs\vessel_env.py
 ```text
 sb3_contrib.CrossQ
 ```
+
+当前控制接口也已经回对齐到上游 code contract：
+
+- `thrust` 范围为 `[0.0, 0.7]`
+- `rudder_signal` 范围为 `[0.4406, 0.5594]`
+- `vessel_env.py` 会把第二维动作直接作为 rudder signal，下发为 `VesselControls([0, thrust], [0, rudder_signal])`
 
 ### 7.2 训练前提
 
@@ -819,6 +828,9 @@ roslaunch airsimros airsim_replay_route_record_sensors.launch
 "NumberOfChannels": 1,
 "MeasurementsPerCycle": 3600
 ```
+
+- 当前代码按上游 code contract 处理 RL state 里的传感器采样，不再提供 Python 侧 `lidar_noise_sigma` / `heading_noise_sigma` 这类额外观测噪声开关。
+- 也就是说，state 里的 heading 与 LiDAR 读数直接使用运行时传感器输出，前提是你的 `settings.json` 已满足这里的 3600 点 LiDAR 契约。
 
 ### 10.3 `activateGeneration()` 或 `getGoal()` 失败
 

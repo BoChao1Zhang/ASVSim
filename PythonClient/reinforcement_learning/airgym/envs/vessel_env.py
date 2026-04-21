@@ -54,10 +54,7 @@ class PCGVesselEnv(gym.Env):
         terrain_max_width_cm=10000.0,
         reward_config=None,
         n_stack=1,
-        lidar_noise_sigma=0.0,
-        heading_noise_sigma=0.0,
         waypoint_radius=10.0,
-        yaw_angle_scale=0.25,
     ):
         super().__init__()
 
@@ -88,10 +85,7 @@ class PCGVesselEnv(gym.Env):
         self.terrain_max_width_cm = float(terrain_max_width_cm)
         self.reward_computer = RewardComputer(reward_config or {})
         self.n_stack = int(n_stack)
-        self.lidar_noise_sigma = float(lidar_noise_sigma)
-        self.heading_noise_sigma = float(heading_noise_sigma)
         self.waypoint_radius = float(waypoint_radius)
-        self.yaw_angle_scale = float(yaw_angle_scale)
         self.timestep = 0
         self.episode_count = 0
         self.rng = np.random.RandomState(seed)
@@ -151,10 +145,10 @@ class PCGVesselEnv(gym.Env):
         }
 
 
-        # Action space: [thrust, yaw_cmd]
+        # Action space: [thrust, rudder_signal]
         self.action_space = spaces.Box(
-            low=np.array([0.0, -1.0], dtype=np.float32),
-            high=np.array([1.0, 1.0], dtype=np.float32),
+            low=np.array([0.0, 0.44055554], dtype=np.float32),
+            high=np.array([0.7, 0.5594444], dtype=np.float32),
             shape=(2,),
             dtype=np.float32,
         )
@@ -162,7 +156,7 @@ class PCGVesselEnv(gym.Env):
         # Single-frame observation: 54-dim vector
         # 2 prev waypoint dist + 2 curr waypoint dist + 2 next waypoint dist
         # + 1 heading_error + 2 heading (sin, cos) + 2 velocity + 3 acceleration
-        # + 2 prev actions (thrust, yaw_cmd)
+        # + 2 prev actions (thrust, rudder_signal)
         # + 36 lidar (3600 points min-pooled into 36 sectors of 10°)
         self.single_obs_size = 54
 
@@ -547,7 +541,7 @@ class PCGVesselEnv(gym.Env):
             "reward": 0.0,
             "reward_components": {},
             "thrust": 0.0,
-            "yaw_cmd": 0.0,
+            "rudder_signal": 0.0,
             "distance_to_final_goal": self._get_last_known_state_scalar("distance_to_final_goal"),
             "distance_to_current_wp": self._get_last_known_state_scalar("distance_to_current_wp"),
             "v_surge": self._get_last_known_state_scalar("v_surge"),
@@ -659,7 +653,17 @@ class PCGVesselEnv(gym.Env):
         # LiDAR data
         lidar_data = self.vessel.getLidarData()
         pointcloud = np.array(lidar_data.point_cloud, dtype=np.float32)
+        if pointcloud.size % 3 != 0:
+            raise ValueError(
+                "LiDAR point cloud size must be divisible by 3 "
+                f"(xyz triplets); got raw length {pointcloud.size}."
+            )
         pointcloud = np.reshape(pointcloud, (int(pointcloud.shape[0] / 3), 3))
+        if pointcloud.shape[0] != 3600:
+            raise ValueError(
+                "LiDAR point cloud must contain exactly 3600 points for RL observation pooling; "
+                f"got {pointcloud.shape[0]}."
+            )
         groundtruth = np.array(lidar_data.groundtruth, dtype=np.dtype("S"))
 
         # Compute 2D distances
@@ -675,17 +679,10 @@ class PCGVesselEnv(gym.Env):
         self.min_obstacle_distance = float(np.min(non_zero)) if len(non_zero) > 0 else 999.0
 
         # Min-pool 3600 points into 36 sectors (each 10°, 100 points)
-        lidar_sectors = np.array_split(lidar_distances, 36)
-        lidar_pooled = np.zeros(36, dtype=np.float32)
-        for idx, sector in enumerate(lidar_sectors):
-            valid = sector[sector > 0]
-            lidar_pooled[idx] = float(np.min(valid)) if valid.size > 0 else 0.0
-        if self.lidar_noise_sigma > 0.0:
-            lidar_pooled = np.clip(
-                lidar_pooled + self.rng.normal(0.0, self.lidar_noise_sigma, size=lidar_pooled.shape),
-                a_min=0.0,
-                a_max=None,
-            ).astype(np.float32)
+        lidar_distances = np.reshape(lidar_distances, (36, 100))
+        lidar_for_pool = np.where(lidar_distances > 0, lidar_distances, np.inf)
+        lidar_pooled = np.min(lidar_for_pool, axis=1)
+        lidar_pooled[lidar_pooled == np.inf] = 0.0
 
         # Heading from quaternion
         z = vessel_state.kinematics_estimated.orientation.z_val
@@ -729,22 +726,16 @@ class PCGVesselEnv(gym.Env):
         heading_error = (heading - goal_angle + np.pi) % (2 * np.pi) - np.pi
         self.state["heading_error"] = heading_error
 
-        observed_heading = heading
-        observed_heading_error = heading_error
-        if self.heading_noise_sigma > 0.0:
-            observed_heading = (heading + self.rng.normal(0.0, self.heading_noise_sigma) + np.pi) % (2 * np.pi) - np.pi
-            observed_heading_error = (observed_heading - goal_angle + np.pi) % (2 * np.pi) - np.pi
-
         # Velocities and accelerations
         linear_velocity_x = vessel_state.kinematics_estimated.linear_velocity.x_val
         linear_velocity_y = vessel_state.kinematics_estimated.linear_velocity.y_val
         linear_acceleration_x = vessel_state.kinematics_estimated.linear_acceleration.x_val
         linear_acceleration_y = vessel_state.kinematics_estimated.linear_acceleration.y_val
         angular_acceleration_z = vessel_state.kinematics_estimated.angular_acceleration.z_val
-        observed_body_frame_surge, observed_body_frame_sway = world_velocity_to_body_frame(
+        body_frame_surge, body_frame_sway = world_velocity_to_body_frame(
             linear_velocity_x,
             linear_velocity_y,
-            observed_heading,
+            heading,
         )
         v_surge, v_los, speed = self._compute_motion_diagnostics(
             linear_velocity_x,
@@ -765,9 +756,9 @@ class PCGVesselEnv(gym.Env):
                 distance_to_curr,
                 dx_next, dy_next,
                 distance_to_next,
-                observed_heading_error,
-                np.sin(observed_heading), np.cos(observed_heading),
-                observed_body_frame_surge, observed_body_frame_sway,
+                heading_error,
+                np.sin(heading), np.cos(heading),
+                body_frame_surge, body_frame_sway,
                 linear_acceleration_x, linear_acceleration_y,
                 angular_acceleration_z,
             ]),
@@ -795,24 +786,19 @@ class PCGVesselEnv(gym.Env):
     def _clip_action(self, action):
         action = np.asarray(action, dtype=np.float32)
         thrust = float(np.clip(action[0], self.action_space.low[0], self.action_space.high[0]))
-        yaw_cmd = float(np.clip(action[1], self.action_space.low[1], self.action_space.high[1]))
-        return np.array([thrust, yaw_cmd], dtype=np.float32)
+        rudder_signal = float(np.clip(action[1], self.action_space.low[1], self.action_space.high[1]))
+        return np.array([thrust, rudder_signal], dtype=np.float32)
 
     def _do_action(self, action):
         thrust = float(action[0])
-        yaw_cmd = float(action[1])
-        angle_delta = 0.5 * yaw_cmd * self.yaw_angle_scale
-        angle_stern = float(np.clip(0.5 - angle_delta, 0.0, 1.0))
-        angle_bow = float(np.clip(0.5 + angle_delta, 0.0, 1.0))
-        vessel_controls = VesselControls([thrust, thrust], [angle_stern, angle_bow])
+        rudder_signal = float(action[1])
+        vessel_controls = VesselControls([0, thrust], [0, rudder_signal])
         diag_log(
             "env_action_applied",
             episode_count=self.episode_count,
             timestep=self.timestep,
             thrust=thrust,
-            yaw_cmd=yaw_cmd,
-            angle_stern=angle_stern,
-            angle_bow=angle_bow,
+            rudder_signal=rudder_signal,
             action_repeat=int(self.action_repeat),
         )
         for _ in range(self.action_repeat):
@@ -927,7 +913,7 @@ class PCGVesselEnv(gym.Env):
             "reward": reward,
             "reward_components": components,
             "thrust": action[0],
-            "yaw_cmd": action[1],
+            "rudder_signal": action[1],
             "distance_to_final_goal": float(self.state["distance_to_final_goal"]),
             "distance_to_current_wp": float(self.state["distance_to_current_wp"]),
             "v_surge": float(self.state["v_surge"]),

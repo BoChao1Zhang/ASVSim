@@ -96,7 +96,7 @@ class EpisodeEndCallback(BaseCallback):
                 "episode/final_distance_to_current_wp": float(info.get("distance_to_current_wp", np.nan)),
                 "episode/waypoints_reached": int(info.get("waypoints_reached", 0)),
                 "episode/mean_thrust": float(ep_actions[:, 0].mean()),
-                "episode/mean_yaw_cmd": float(ep_actions[:, 1].mean()),
+                "episode/mean_rudder_signal": float(ep_actions[:, 1].mean()),
                 "episode/mean_v_surge": float(ep_v_surge.mean()),
                 "episode/time_moving_frac": float(ep_is_moving.mean()),
                 "episode/count": int(info.get("episode_num", 0)),
@@ -267,10 +267,7 @@ def make_env(config):
             terrain_max_width_cm=float(config.env.terrain_max_width_cm),
             reward_config=config.reward,
             n_stack=int(config.env.n_stack),
-            lidar_noise_sigma=float(config.env.lidar_noise_sigma),
-            heading_noise_sigma=float(config.env.heading_noise_sigma),
             waypoint_radius=float(config.env.waypoint_radius),
-            yaw_angle_scale=float(config.env.yaw_angle_scale),
         )
         if bool(config.curriculum.enabled):
             env = CurriculumWrapper(

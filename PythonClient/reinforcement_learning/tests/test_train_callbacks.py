@@ -84,7 +84,7 @@ class EpisodeEndCallbackTests(unittest.TestCase):
         self.assertAlmostEqual(model.logger.records["episode/mean_v_surge"], 0.5)
         self.assertAlmostEqual(model.logger.records["episode/time_moving_frac"], 0.5)
         self.assertAlmostEqual(model.logger.records["episode/mean_thrust"], 0.3)
-        self.assertAlmostEqual(model.logger.records["episode/mean_yaw_cmd"], -0.05)
+        self.assertAlmostEqual(model.logger.records["episode/mean_rudder_signal"], -0.05)
         self.assertAlmostEqual(model.logger.records["reward_components/progress"], 1.25)
         self.assertAlmostEqual(model.logger.records["reward_components/safety"], -0.5)
 
@@ -152,6 +152,50 @@ class CreateModelTests(unittest.TestCase):
         kwargs = crossq_ctor.call_args.kwargs
         self.assertEqual(kwargs["device"], "cuda")
         self.assertEqual(kwargs["policy_kwargs"]["net_arch"], {"pi": [256, 256], "qf": [2048, 2048]})
+
+
+class MakeEnvTests(unittest.TestCase):
+    def test_train_make_env_does_not_forward_removed_local_control_and_noise_params(self):
+        config = SimpleNamespace(
+            env=SimpleNamespace(
+                ip_address="127.0.0.1",
+                terrain_regen_interval=10,
+                num_obstacles=4,
+                num_dynamic_obstacles=0,
+                num_waypoints=1,
+                max_timesteps=None,
+                step_sleep=0.25,
+                action_repeat=1,
+                sim_path="Blocks/Blocks.exe",
+                sim_wait=10,
+                launch_sim="none",
+                use_c_side_pcg_obstacles=False,
+                terrain_length=10,
+                angle_range=[-45.0, 45.0],
+                terrain_min_width_cm=5000.0,
+                terrain_max_width_cm=10000.0,
+                n_stack=1,
+                waypoint_radius=10.0,
+                first_waypoint_max_timesteps=1200,
+                additional_waypoint_max_timesteps=800,
+            ),
+            reward=SimpleNamespace(),
+            curriculum=SimpleNamespace(enabled=False),
+            train=SimpleNamespace(seed=43),
+        )
+
+        with (
+            mock.patch.object(train, "PCGVesselEnv", return_value="fake-env") as env_ctor,
+            mock.patch.object(train, "Monitor", side_effect=lambda env: env),
+        ):
+            env = train.make_env(config)()
+
+        self.assertEqual(env, "fake-env")
+        kwargs = env_ctor.call_args.kwargs
+        self.assertNotIn("lidar_noise_sigma", kwargs)
+        self.assertNotIn("heading_noise_sigma", kwargs)
+        self.assertNotIn("yaw_angle_scale", kwargs)
+        self.assertEqual(kwargs["waypoint_radius"], 10.0)
 
 
 if __name__ == "__main__":

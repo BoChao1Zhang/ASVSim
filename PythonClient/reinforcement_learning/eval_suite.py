@@ -187,10 +187,7 @@ def make_env(config):
             terrain_max_width_cm=float(config.env.terrain_max_width_cm),
             reward_config=config.reward,
             n_stack=int(config.env.n_stack),
-            lidar_noise_sigma=float(config.env.lidar_noise_sigma),
-            heading_noise_sigma=float(config.env.heading_noise_sigma),
             waypoint_radius=float(config.env.waypoint_radius),
-            yaw_angle_scale=float(config.env.yaw_angle_scale),
         )
         return Monitor(env)
 

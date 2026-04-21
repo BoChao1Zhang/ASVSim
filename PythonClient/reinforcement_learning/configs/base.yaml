@@ -18,11 +18,8 @@ env:
   launch_sim: none
   use_c_side_pcg_obstacles: false
   n_stack: 1
-  lidar_noise_sigma: 0.0
-  heading_noise_sigma: 0.0
   waypoint_radius: 10.0
   observation_schema_version: 2
-  yaw_angle_scale: 0.25
 
 reward:
   progress: 1.0

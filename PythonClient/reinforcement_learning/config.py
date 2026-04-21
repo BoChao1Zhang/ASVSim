@@ -58,11 +58,8 @@ class EnvConfig:
     launch_sim: str = "none"
     use_c_side_pcg_obstacles: bool = False
     n_stack: int = 1
-    lidar_noise_sigma: float = 0.0
-    heading_noise_sigma: float = 0.0
     waypoint_radius: float = 10.0
     observation_schema_version: int = OBSERVATION_SCHEMA_VERSION
-    yaw_angle_scale: float = 0.25
 
 
 @dataclass
@@ -369,8 +366,6 @@ def validate_config(config) -> None:
         raise ValueError("env.n_stack must be >= 1")
     if len(config.env.angle_range) != 2:
         raise ValueError("env.angle_range must contain exactly two values")
-    if not 0.0 <= float(config.env.yaw_angle_scale) <= 1.0:
-        raise ValueError("env.yaw_angle_scale must be within [0.0, 1.0]")
     if config.env.launch_sim == "exe" and not config.env.sim_path:
         raise ValueError("env.sim_path is required when env.launch_sim=exe")
     if int(config.env.num_dynamic_obstacles) != 0:

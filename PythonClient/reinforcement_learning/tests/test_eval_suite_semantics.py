@@ -202,7 +202,7 @@ class EvalSuiteSemanticsTests(unittest.TestCase):
     def test_eval_suite_rejects_run_config_without_observation_schema_version(self):
         with TemporaryDirectory() as temp_dir:
             run_dir = Path(temp_dir)
-            (run_dir / "config.yaml").write_text("env:\n  yaw_angle_scale: 0.6\n", encoding="utf-8")
+            (run_dir / "config.yaml").write_text("env:\n  waypoint_radius: 10.0\n", encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "missing env\\.observation_schema_version"):
                 eval_suite.require_supported_observation_schema(run_dir)
@@ -217,6 +217,47 @@ class EvalSuiteSemanticsTests(unittest.TestCase):
                 rf"observation_schema_version=1.*expected {OBSERVATION_SCHEMA_VERSION}",
             ):
                 eval_suite.require_supported_observation_schema(run_dir)
+
+    def test_eval_make_env_does_not_forward_removed_local_control_and_noise_params(self):
+        config = SimpleNamespace(
+            env=SimpleNamespace(
+                ip_address="127.0.0.1",
+                terrain_regen_interval=10,
+                num_obstacles=4,
+                num_dynamic_obstacles=0,
+                num_waypoints=1,
+                max_timesteps=None,
+                step_sleep=0.25,
+                action_repeat=1,
+                sim_path="Blocks/Blocks.exe",
+                sim_wait=10,
+                launch_sim="none",
+                use_c_side_pcg_obstacles=False,
+                terrain_length=10,
+                angle_range=[-45.0, 45.0],
+                terrain_min_width_cm=5000.0,
+                terrain_max_width_cm=10000.0,
+                n_stack=1,
+                waypoint_radius=10.0,
+                first_waypoint_max_timesteps=1200,
+                additional_waypoint_max_timesteps=800,
+            ),
+            reward=SimpleNamespace(),
+            train=SimpleNamespace(seed=43),
+        )
+
+        with (
+            mock.patch.object(eval_suite, "PCGVesselEnv", return_value="fake-env") as env_ctor,
+            mock.patch.object(eval_suite, "Monitor", side_effect=lambda env: env),
+        ):
+            env = eval_suite.make_env(config)()
+
+        self.assertEqual(env, "fake-env")
+        kwargs = env_ctor.call_args.kwargs
+        self.assertNotIn("lidar_noise_sigma", kwargs)
+        self.assertNotIn("heading_noise_sigma", kwargs)
+        self.assertNotIn("yaw_angle_scale", kwargs)
+        self.assertEqual(kwargs["waypoint_radius"], 10.0)
 
 
 if __name__ == "__main__":
